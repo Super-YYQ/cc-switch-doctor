@@ -48,7 +48,7 @@ tempfile = "3"
 wiremock = "0.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync", "test-util"] }
 pretty_assertions = "1"
-httpmock = "0.7"
+httpmock = "0.8"
 
 [profile.release]
 panic = "abort"
