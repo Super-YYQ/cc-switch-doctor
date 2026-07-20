@@ -26,24 +26,9 @@ jobs:
       - run: npm run build
       - run: npm run security:verify
 
-  rust:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-      - name: fmt
-        run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
-      - name: clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-      - name: test
-        run: cargo test --manifest-path src-tauri/Cargo.toml
-
-  windows-build:
+  # Windows-first product: run Rust gates on windows-latest so Tauri native
+  # deps (glib/gtk) are not required on Ubuntu.
+  rust-and-build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,19 +37,22 @@ jobs:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
       - run: npm ci
+      - name: Rust fmt
+        run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
+      - name: Rust clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Rust test
+        run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: npm run security:verify
-      - name: Tauri build
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: .
-          tauriScript: npm run tauri
-          args: -- --bundles nsis
+      - name: Tauri Windows build smoke
+        shell: bash
+        run: npm run tauri build -- --bundles nsis
       - name: Upload CI artifacts
         uses: actions/upload-artifact@v4
         with:
