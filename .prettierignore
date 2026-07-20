@@ -1,0 +1,7 @@
+# Ignore large design doc from prettier if needed
+CC Switch Doctor 项目需求与单目标交付设计文档.md
+package-lock.json
+dist
+src-tauri/target
+node_modules
+*.sql

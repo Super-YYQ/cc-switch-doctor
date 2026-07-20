@@ -1,0 +1,69 @@
+{
+  "manifestVersion": 1,
+  "doctorVersion": "0.1.0",
+  "verifiedAt": "2026-07-20T12:00:00Z",
+  "checkedAt": "2026-07-20",
+  "ccSwitch": {
+    "repository": "https://github.com/farion1231/cc-switch",
+    "latestObservedRelease": "3.17.0",
+    "latestObservedReleasePublishedAt": "2026-07-13T16:05:55Z",
+    "latestMainCommit": "613fef70bc7d5e35299b4131935f738c85765b35",
+    "latestMainCommitDate": "2026-07-19T03:39:29Z",
+    "baselineCommit": "3d176b98cc0bfd151a42882e88ab59b62083b92f",
+    "baselineTag": "v3.17.0",
+    "schemaVersion": 15,
+    "verifiedReleases": ["3.17.0"],
+    "compatibleReleasePrefixes": ["3.17."],
+    "defaultDataDir": "~/.cc-switch/",
+    "databaseFile": "cc-switch.db",
+    "schemaFingerprints": [
+      {
+        "id": "ccs-schema-v15-providers-v317",
+        "status": "verified",
+        "userVersion": 15,
+        "requiredTables": ["providers", "provider_endpoints", "settings"],
+        "providersColumns": [
+          "id",
+          "app_type",
+          "name",
+          "settings_config",
+          "website_url",
+          "category",
+          "created_at",
+          "sort_index",
+          "notes",
+          "icon",
+          "icon_color",
+          "meta",
+          "is_current",
+          "in_failover_queue"
+        ],
+        "providerEndpointsColumns": ["id", "provider_id", "app_type", "url", "added_at"]
+      }
+    ]
+  },
+  "supportedAppTypes": [
+    "claude",
+    "claude-desktop",
+    "codex",
+    "gemini",
+    "opencode",
+    "openclaw",
+    "hermes",
+    "grokbuild"
+  ],
+  "supportedProtocols": ["openai_chat", "openai_responses", "anthropic_messages", "gemini_native"],
+  "managedAuthSkip": [
+    "codex_oauth",
+    "github_copilot",
+    "chatgpt.com/backend-api/codex",
+    "official_subscription",
+    "oauth_refresh_token"
+  ],
+  "rulesVersion": "1",
+  "notes": [
+    "Baseline verified against farion1231/cc-switch v3.17.0 (annotated tag object 751793f..., target commit 3d176b9...).",
+    "Main branch head at check time: 613fef70 (2026-07-19) still uses SCHEMA_VERSION = 15.",
+    "Doctor never writes to CC Switch database and never launches AI CLIs."
+  ]
+}

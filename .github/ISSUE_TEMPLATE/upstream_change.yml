@@ -1,0 +1,25 @@
+name: Upstream Change
+description: CC Switch upstream release needs compatibility review
+title: "[upstream] "
+labels: ["upstream-change"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use for manual upstream tracking. Automated issues are also opened by `upstream-watch.yml`.
+  - type: input
+    id: version
+    attributes:
+      label: CC Switch version
+      placeholder: "3.18.0"
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / checklist
+      value: |
+        - [ ] Schema
+        - [ ] Provider paths
+        - [ ] Fixtures
+        - [ ] Tests

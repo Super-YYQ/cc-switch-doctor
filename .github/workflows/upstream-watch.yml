@@ -1,0 +1,61 @@
+name: Upstream Watch
+
+on:
+  schedule:
+    # daily ~08:17 UTC (avoid :00/:30)
+    - cron: "17 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare CC Switch latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          OBSERVED=$(jq -r '.ccSwitch.latestObservedRelease' compatibility/manifest.json)
+          LATEST=$(gh api repos/farion1231/cc-switch/releases/latest --jq '.tag_name' | sed 's/^v//')
+          PUBLISHED=$(gh api repos/farion1231/cc-switch/releases/latest --jq '.published_at')
+          URL=$(gh api repos/farion1231/cc-switch/releases/latest --jq '.html_url')
+          echo "manifest=$OBSERVED latest=$LATEST"
+          if [ "$LATEST" = "$OBSERVED" ]; then
+            echo "No upstream version change."
+            exit 0
+          fi
+          TITLE="upstream-change: CC Switch v${LATEST}"
+          # avoid duplicate open issues
+          EXISTING=$(gh issue list --label upstream-change --state open --search "CC Switch v${LATEST}" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            echo "Issue #$EXISTING already open"
+            exit 0
+          fi
+          BODY=$(cat <<EOF
+          ## Upstream CC Switch change detected
+
+          | Field | Value |
+          | --- | --- |
+          | Manifest observed | \`${OBSERVED}\` |
+          | Latest release | \`${LATEST}\` |
+          | Published | ${PUBLISHED} |
+          | Link | ${URL} |
+
+          ### Checklist (do not auto-verify)
+          - [ ] Read release notes
+          - [ ] Diff \`database/schema.rs\` / \`SCHEMA_VERSION\`
+          - [ ] Diff provider credential extraction paths
+          - [ ] Update fixtures + \`compatibility/manifest.json\`
+          - [ ] Run cargo tests + security gates
+          - [ ] Decide verified vs compatible only after manual validation
+
+          This workflow never marks a release as verified and never publishes Doctor.
+          EOF
+          )
+          gh issue create --title "$TITLE" --label "upstream-change" --body "$BODY" || \
+            gh issue create --title "$TITLE" --body "$BODY"

@@ -1,0 +1,71 @@
+{
+  "id": "ccs-schema-v15-providers-v317",
+  "ccSwitchRelease": "3.17.0",
+  "userVersion": 15,
+  "tables": {
+    "providers": {
+      "columns": [
+        "id",
+        "app_type",
+        "name",
+        "settings_config",
+        "website_url",
+        "category",
+        "created_at",
+        "sort_index",
+        "notes",
+        "icon",
+        "icon_color",
+        "meta",
+        "is_current",
+        "in_failover_queue"
+      ],
+      "primaryKey": ["id", "app_type"]
+    },
+    "provider_endpoints": {
+      "columns": ["id", "provider_id", "app_type", "url", "added_at"]
+    },
+    "settings": {
+      "columns": ["key", "value"]
+    }
+  },
+  "credentialPaths": {
+    "claude": {
+      "baseUrl": "/env/ANTHROPIC_BASE_URL",
+      "apiKeyCandidates": [
+        "/env/ANTHROPIC_AUTH_TOKEN",
+        "/env/ANTHROPIC_API_KEY",
+        "/env/OPENROUTER_API_KEY",
+        "/env/GOOGLE_API_KEY"
+      ]
+    },
+    "claude-desktop": {
+      "baseUrl": "/env/ANTHROPIC_BASE_URL",
+      "apiKeyCandidates": ["/env/ANTHROPIC_AUTH_TOKEN", "/env/ANTHROPIC_API_KEY"]
+    },
+    "codex": {
+      "apiKey": "/auth/OPENAI_API_KEY",
+      "baseUrl": "config.toml model_providers.<active>.base_url or top-level base_url"
+    },
+    "gemini": {
+      "baseUrl": "/env/GOOGLE_GEMINI_BASE_URL",
+      "apiKeyCandidates": ["/env/GEMINI_API_KEY", "/env/GOOGLE_API_KEY"]
+    },
+    "opencode": {
+      "baseUrl": "/options/baseURL",
+      "apiKey": "/options/apiKey"
+    },
+    "openclaw": {
+      "baseUrl": "/baseUrl",
+      "apiKey": "/apiKey"
+    },
+    "hermes": {
+      "baseUrl": "/base_url",
+      "apiKey": "/api_key"
+    }
+  },
+  "managedAuth": {
+    "providerTypeValues": ["codex_oauth", "github_copilot"],
+    "baseUrlSubstrings": ["chatgpt.com/backend-api/codex", "githubcopilot.com"]
+  }
+}

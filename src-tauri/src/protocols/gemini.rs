@@ -1,0 +1,133 @@
+use super::types::{apply_auth, AuthScheme, BuiltRequest, RequestPurpose, MAX_TOKENS, PROMPT_EN};
+use crate::ccs_adapter::ProtocolKind;
+use crate::security::url_variants::join_url;
+use serde_json::json;
+use std::collections::HashMap;
+
+pub fn build_gemini_request(
+    base: &str,
+    model: &str,
+    api_key: &str,
+    stream: bool,
+    tool_call: bool,
+    user_agent: Option<&str>,
+) -> BuiltRequest {
+    let action = if stream {
+        "streamGenerateContent"
+    } else {
+        "generateContent"
+    };
+    // Prefer v1beta
+    let path = format!("/v1beta/models/{model}:{action}");
+    let mut url = join_url(base, &path);
+
+    let mut body = json!({
+        "contents": [{
+            "role": "user",
+            "parts": [{"text": PROMPT_EN}]
+        }],
+        "generationConfig": {
+            "maxOutputTokens": MAX_TOKENS
+        }
+    });
+
+    if tool_call {
+        body["tools"] = json!([{
+            "functionDeclarations": [{
+                "name": "ccs_doctor_echo",
+                "description": "Echo a value for connectivity testing.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"value": {"type": "string"}},
+                    "required": ["value"]
+                }
+            }]
+        }]);
+        body["contents"] = json!([{
+            "role":"user",
+            "parts":[{"text":"Call ccs_doctor_echo with value \"ok\"."}]
+        }]);
+        body["generationConfig"] = json!({"maxOutputTokens": 64});
+    }
+
+    let mut headers = HashMap::new();
+    headers.insert("Content-Type".into(), "application/json".into());
+    apply_auth(&mut headers, AuthScheme::XGoogApiKey, api_key);
+    if let Some(ua) = user_agent {
+        if !ua.trim().is_empty() {
+            headers.insert("User-Agent".into(), ua.trim().to_string());
+        }
+    }
+
+    // stream query alt=sse sometimes required
+    if stream && !url.contains('?') {
+        url.push_str("?alt=sse");
+    }
+
+    BuiltRequest {
+        method: "POST".into(),
+        url,
+        headers,
+        body: Some(body),
+        stream,
+        protocol: ProtocolKind::GeminiNative,
+        model: model.to_string(),
+        purpose: if tool_call {
+            RequestPurpose::ToolCall
+        } else if stream {
+            RequestPurpose::StreamGenerate
+        } else {
+            RequestPurpose::Generate
+        },
+    }
+}
+
+pub fn extract_gemini_text(value: &serde_json::Value) -> Option<String> {
+    if value.get("error").is_some() {
+        return None;
+    }
+    let cands = value.get("candidates")?.as_array()?;
+    let mut out = String::new();
+    for c in cands {
+        if let Some(parts) = c.pointer("/content/parts").and_then(|v| v.as_array()) {
+            for p in parts {
+                if let Some(t) = p.get("text").and_then(|x| x.as_str()) {
+                    out.push_str(t);
+                }
+            }
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+pub fn extract_gemini_tool_call(value: &serde_json::Value) -> Option<(String, String)> {
+    let cands = value.get("candidates")?.as_array()?;
+    for c in cands {
+        if let Some(parts) = c.pointer("/content/parts").and_then(|v| v.as_array()) {
+            for p in parts {
+                if let Some(fc) = p.get("functionCall") {
+                    let name = fc.get("name").and_then(|v| v.as_str())?.to_string();
+                    let args = fc.get("args").cloned().unwrap_or(json!({})).to_string();
+                    return Some((name, args));
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn extract_text() {
+        let v = json!({"candidates":[{"content":{"parts":[{"text":"CCS_DOCTOR_OK"}]}}]});
+        assert_eq!(extract_gemini_text(&v).as_deref(), Some("CCS_DOCTOR_OK"));
+    }
+}
