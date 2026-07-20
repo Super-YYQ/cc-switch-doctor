@@ -1,7 +1,7 @@
 {
   "name": "cc-switch-doctor",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Read-only, stateless, pure-HTTP diagnostic tool for CC Switch third-party providers",
   "scripts": {

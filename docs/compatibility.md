@@ -9,7 +9,7 @@
 | Baseline commit (tag target) | `3d176b98cc0bfd151a42882e88ab59b62083b92f` |
 | main HEAD at check           | `613fef70bc7d5e35299b4131935f738c85765b35` |
 | SCHEMA_VERSION               | **15**                                     |
-| Doctor version               | 0.1.0                                      |
+| Doctor version               | 0.1.1                                      |
 
 Source: https://github.com/farion1231/cc-switch
 

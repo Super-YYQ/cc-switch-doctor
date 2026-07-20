@@ -20,10 +20,13 @@ pub fn build_chat_request(
     // Also try without forcing v1 when base already includes full path-like ending
     let url = join_url(base, path);
 
+    // Prefer max_completion_tokens (modern OpenAI); max_tokens kept as compatibility fallback
+    // only when the planner retries after an unsupported-parameter error.
+    let token_cap = if tool_call { 64 } else { MAX_TOKENS };
     let mut body = json!({
         "model": model,
         "messages": [{"role":"user","content": PROMPT_EN}],
-        "max_tokens": MAX_TOKENS,
+        "max_completion_tokens": token_cap,
         "stream": stream
     });
 
@@ -49,7 +52,6 @@ pub fn build_chat_request(
         body["messages"] = json!([
             {"role":"user","content":"Call the ccs_doctor_echo tool with value \"ok\". Do not answer otherwise."}
         ]);
-        body["max_tokens"] = json!(64);
     }
 
     let mut headers = HashMap::new();

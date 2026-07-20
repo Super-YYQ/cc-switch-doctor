@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
-  "doctorVersion": "0.1.0",
-  "verifiedAt": "2026-07-20T12:00:00Z",
+  "doctorVersion": "0.1.1",
+  "verifiedAt": "2026-07-20T14:30:00Z",
   "checkedAt": "2026-07-20",
   "ccSwitch": {
     "repository": "https://github.com/farion1231/cc-switch",

@@ -1,4 +1,9 @@
 CC Switch Doctor 项目需求与单目标交付设计文档.md
+PROJECT_SPEC.md
+UI_UX_ADDENDUM.md
+UI_WIREFRAME_COMPONENT_SPEC.md
+FINAL_GOAL_PROMPT.md
+README_FIRST.md
 package-lock.json
 dist
 src-tauri/target

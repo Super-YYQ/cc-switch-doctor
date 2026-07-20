@@ -3,6 +3,7 @@ import {
   assertNoFullKeyInDom,
   estimateClientSide,
   filterProviders,
+  hostFromUrl,
   statusBadge,
 } from "@/lib/utils";
 import type { ProviderListItem } from "@/types";
@@ -51,17 +52,25 @@ describe("filterProviders", () => {
       1,
     );
   });
+
+  it("supports onlySelected", () => {
+    const selected = new Set(["1"]);
+    expect(
+      filterProviders(sample, { app: "all", query: "", onlySelected: true, selected }),
+    ).toHaveLength(1);
+  });
 });
 
 describe("statusBadge", () => {
-  it("marks success and danger", () => {
+  it("marks success and danger with Chinese copy", () => {
     expect(statusBadge("CURRENT_CONFIG_OK").kind).toBe("ok");
+    expect(statusBadge("CURRENT_CONFIG_OK").zh).toContain("使用");
     expect(statusBadge("KEY_INVALID").kind).toBe("danger");
     expect(statusBadge("MANAGED_AUTH_SKIPPED").kind).toBe("skip");
   });
 });
 
-describe("estimate and key safety", () => {
+describe("estimate, host and key safety", () => {
   it("estimates requests", () => {
     expect(estimateClientSide(2, "smart")).toBe(24);
   });
@@ -69,5 +78,9 @@ describe("estimate and key safety", () => {
   it("detects full keys", () => {
     expect(assertNoFullKeyInDom("sk-abcdefghijklmnopqrstuvwxyz")).toBe(false);
     expect(assertNoFullKeyInDom("sk-tes…1234")).toBe(true);
+  });
+
+  it("extracts host", () => {
+    expect(hostFromUrl("https://api.example.com/v1/chat")).toBe("api.example.com");
   });
 });

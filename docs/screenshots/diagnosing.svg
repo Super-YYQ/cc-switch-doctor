@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <rect width="1440" height="900" fill="#f4f7fb"/>
+  <rect x="24" y="20" width="1392" height="68" rx="16" fill="#fff" stroke="#d9e2ef"/>
+  <text x="48" y="52" fill="#0f172a" font-family="Segoe UI,sans-serif" font-size="20" font-weight="700">CC Switch Doctor</text>
+  <text x="250" y="52" fill="#2563eb" font-family="Segoe UI,sans-serif" font-size="12">v0.1.1</text>
+  <text x="48" y="72" fill="#64748b" font-family="Segoe UI,sans-serif" font-size="12">只读扫描 · 纯 HTTP · 不启动 AI CLI</text>
+  <rect x="24" y="100" width="1392" height="56" rx="16" fill="#fff" stroke="#d9e2ef"/>
+  <text x="48" y="134" fill="#0f172a" font-family="Segoe UI,sans-serif" font-size="14">正在诊断 1 / 2 · 请求 3 / 24</text>
+  <rect x="1180" y="112" width="200" height="36" rx="10" fill="#2563eb"/>
+  <text x="1225" y="135" fill="#fff" font-family="Segoe UI,sans-serif" font-size="14" font-weight="600">开始诊断</text>
+  <rect x="24" y="168" width="800" height="708" rx="16" fill="#fff" stroke="#d9e2ef"/>
+  <rect x="836" y="168" width="580" height="708" rx="16" fill="#fff" stroke="#d9e2ef"/>
+  <text x="48" y="170" fill="#334155" font-family="Segoe UI,sans-serif" font-size="13">Provider 配置</text><text x="48" y="198" fill="#334155" font-family="Segoe UI,sans-serif" font-size="13">☑ DeepSeek  [运行中]</text><text x="48" y="226" fill="#334155" font-family="Segoe UI,sans-serif" font-size="13">☑ MiniMax  [等待]</text>
+  <text x="780" y="170" fill="#334155" font-family="Segoe UI,sans-serif" font-size="13">诊断结果</text><text x="780" y="196" fill="#334155" font-family="Segoe UI,sans-serif" font-size="13">DeepSeek · 当前配置可用</text><text x="780" y="222" fill="#334155" font-family="Segoe UI,sans-serif" font-size="13">MiniMax · 诊断中…</text>
+</svg>

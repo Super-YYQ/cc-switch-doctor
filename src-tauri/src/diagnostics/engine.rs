@@ -213,9 +213,15 @@ async fn diagnose_one(
     let mut success_result: Option<AttemptResult> = None;
     let mut stop_all = false;
     let mut rate_limited = false;
+    // Per-host session budget (spec: max 30 requests per host per session/run)
+    let mut host_request_count: usize = 0;
+    const MAX_HOST_REQUESTS: usize = 30;
 
     for (index, plan) in plans.iter().enumerate() {
         if cancel.is_cancelled() || stop_all {
+            break;
+        }
+        if host_request_count >= MAX_HOST_REQUESTS {
             break;
         }
         // After current success in smart/deep, skip repair attempts but allow deep extras carefully
@@ -312,6 +318,7 @@ async fn diagnose_one(
         let result = exec
             .execute(built, &origin, &redactor, cancel, timeout)
             .await;
+        host_request_count += 1;
 
         if result.classification == "RATE_LIMITED" || result.classification == "QUOTA_EXHAUSTED" {
             if result.classification == "RATE_LIMITED" {
