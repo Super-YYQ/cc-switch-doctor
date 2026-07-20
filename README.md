@@ -10,8 +10,8 @@
 
 ## 截图
 
-| 空状态 | 已选择 | 混合结果 |
-| --- | --- | --- |
+| 空状态                                         | 已选择                                               | 混合结果                                             |
+| ---------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------- |
 | ![main-empty](docs/screenshots/main-empty.png) | ![main-selected](docs/screenshots/main-selected.png) | ![results-mixed](docs/screenshots/results-mixed.png) |
 
 ## 安全保证
