@@ -1,0 +1,12 @@
+{
+  "id": "chatcmpl_fixture_1",
+  "object": "chat.completion",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": "fixture chat ok"},
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
+}

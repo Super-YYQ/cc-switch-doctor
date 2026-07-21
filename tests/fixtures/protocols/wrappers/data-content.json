@@ -1,0 +1,10 @@
+{
+  "data": {
+    "choices": [
+      {
+        "message": {"role": "assistant", "content": "wrapped chat ok"},
+        "finish_reason": "stop"
+      }
+    ]
+  }
+}
