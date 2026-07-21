@@ -111,6 +111,7 @@ pub struct ProviderDiagnosisSummary {
     pub route_side_effect_notice: Option<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_diagnosis(
     run_id: String,
     providers: Vec<NormalizedProvider>,
@@ -758,14 +759,16 @@ async fn diagnose_one(
             needs_local,
         )
     };
-    if model_is_guessed && any_ok && !current_ok && direct_status != "LOCAL_ROUTING_REQUIRED" {
-        if direct_status == "CURRENT_CONFIG_OK"
+    if model_is_guessed
+        && any_ok
+        && !current_ok
+        && direct_status != "LOCAL_ROUTING_REQUIRED"
+        && (direct_status == "CURRENT_CONFIG_OK"
             || direct_status == "MODEL_VARIANT_OK"
             || direct_status == "AUTH_VARIANT_OK"
-            || (!protocol_changed && !url_changed)
-        {
-            direct_status = "MODEL_GUESS_OK".into();
-        }
+            || (!protocol_changed && !url_changed))
+    {
+        direct_status = "MODEL_GUESS_OK".into();
     }
 
     let route_status_str = route_classification.clone();

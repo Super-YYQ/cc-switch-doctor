@@ -32,6 +32,7 @@ export function ProviderRow({
 
   return (
     <article
+      id={`provider-${p.opaqueId}`}
       className={[
         "provider-card",
         checked ? "selected" : "",

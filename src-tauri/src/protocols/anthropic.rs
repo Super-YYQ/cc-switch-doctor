@@ -79,8 +79,16 @@ pub fn build_anthropic_request(
 }
 
 pub fn extract_anthropic_text(value: &serde_json::Value) -> Option<String> {
-    if value.get("error").is_some() {
-        return None;
+    if let Some(err) = value.get("error") {
+        if crate::diagnostics::classifier::is_meaningful_error_value(err) {
+            return None;
+        }
+    }
+    // content as string
+    if let Some(s) = value.get("content").and_then(|v| v.as_str()) {
+        if !s.is_empty() {
+            return Some(s.to_string());
+        }
     }
     let content = value.get("content")?.as_array()?;
     let mut out = String::new();
@@ -89,6 +97,11 @@ pub fn extract_anthropic_text(value: &serde_json::Value) -> Option<String> {
             if let Some(t) = c.get("text").and_then(|x| x.as_str()) {
                 out.push_str(t);
             }
+        } else if let Some(t) = c.get("text").and_then(|x| x.as_str()) {
+            // some gateways omit type
+            out.push_str(t);
+        } else if let Some(t) = c.as_str() {
+            out.push_str(t);
         }
     }
     if out.is_empty() {

@@ -70,15 +70,17 @@ pub fn build_responses_request(
 }
 
 pub fn extract_responses_text(value: &serde_json::Value) -> Option<String> {
-    if value.get("error").is_some() {
-        return None;
+    if let Some(err) = value.get("error") {
+        if crate::diagnostics::classifier::is_meaningful_error_value(err) {
+            return None;
+        }
     }
     if let Some(s) = value.get("output_text").and_then(|v| v.as_str()) {
         if !s.is_empty() {
             return Some(s.to_string());
         }
     }
-    // output[].content[].text
+    // output[].content[].text / output_text type
     if let Some(output) = value.get("output").and_then(|v| v.as_array()) {
         let mut out = String::new();
         for item in output {
@@ -86,10 +88,22 @@ pub fn extract_responses_text(value: &serde_json::Value) -> Option<String> {
                 for c in content {
                     if let Some(t) = c.get("text").and_then(|v| v.as_str()) {
                         out.push_str(t);
+                    } else if c.get("type").and_then(|t| t.as_str()) == Some("output_text") {
+                        if let Some(t) = c.get("text").and_then(|v| v.as_str()) {
+                            out.push_str(t);
+                        }
                     }
                 }
             }
-            // function call style may not have text
+            if item.get("type").and_then(|t| t.as_str()) == Some("message") {
+                if let Some(content) = item.get("content").and_then(|v| v.as_array()) {
+                    for c in content {
+                        if let Some(t) = c.get("text").and_then(|v| v.as_str()) {
+                            out.push_str(t);
+                        }
+                    }
+                }
+            }
         }
         if !out.is_empty() {
             return Some(out);

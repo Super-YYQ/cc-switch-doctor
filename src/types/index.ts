@@ -56,7 +56,36 @@ export interface ProviderScanView {
   canTest: boolean;
   scannedAt: string;
   ccSwitchVersionHint?: string | null;
+  routing?: RoutingStatusView | null;
 }
+
+export interface AppRoutingStatusView {
+  appType: string;
+  appLabel: string;
+  enabled: boolean;
+  autoFailoverEnabled: boolean;
+  maxRetries?: number | null;
+  streamingFirstByteTimeout?: number | null;
+  streamingIdleTimeout?: number | null;
+  nonStreamingTimeout?: number | null;
+  activeProviderId?: string | null;
+  activeProviderName?: string | null;
+}
+
+export interface RoutingStatusView {
+  configDetected: boolean;
+  globalEnabled: boolean;
+  listenAddress?: string | null;
+  listenPort?: number | null;
+  healthReachable: boolean;
+  serverRunning: boolean;
+  failoverCount?: number | null;
+  apps: AppRoutingStatusView[];
+  warning?: string | null;
+  connectHost?: string | null;
+}
+
+export type VerifyMode = "auto" | "direct_only" | "direct_and_route";
 
 export interface ErrorEvidence {
   source: string;
@@ -87,6 +116,10 @@ export interface AttemptResult {
   suggestionNote?: string | null;
   tokenLimitField?: "max_completion_tokens" | "max_tokens" | null;
   errorEvidence?: ErrorEvidence[];
+  channel?: "direct_upstream" | "ccs_local_route" | string;
+  responseCompatibility?: "native" | "cross_protocol" | "loose_field" | string | null;
+  requestedProtocol?: string | null;
+  matchedProtocol?: string | null;
 }
 
 export interface ProviderDiagnosisSummary {
@@ -108,6 +141,9 @@ export interface ProviderDiagnosisSummary {
   evidence: string[];
   attempts: AttemptResult[];
   confidence: string;
+  routeStatus?: string | null;
+  directStatus?: string | null;
+  routeSideEffectNotice?: string | null;
 }
 
 export type DiagnosisEvent =

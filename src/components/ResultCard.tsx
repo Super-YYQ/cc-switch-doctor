@@ -49,6 +49,10 @@ export function ResultCard({ summary: s, onCopy }: Props) {
     (a) => a.classification === "RESPONSE_PROTOCOL_VARIANT_OK" && a.suggestionNote,
   )?.suggestionNote;
 
+  const routeAttempts = s.attempts.filter((a) => a.channel === "ccs_local_route");
+  const directAttempts = s.attempts.filter((a) => !a.channel || a.channel === "direct_upstream");
+  const showChannels = routeAttempts.length > 0 || !!s.routeStatus || !!s.directStatus;
+
   return (
     <article className={`result-card ${b.kind}`}>
       <div className="result-card-head">
@@ -67,6 +71,55 @@ export function ResultCard({ summary: s, onCopy }: Props) {
       </div>
 
       <p className="result-conclusion">{conclusion}</p>
+
+      {showChannels && (
+        <div style={{ display: "grid", gap: 6, marginBottom: 8 }}>
+          {(routeAttempts.length > 0 || s.routeStatus) && (
+            <div
+              style={{
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                padding: "6px 8px",
+                background: "var(--bg-soft)",
+                fontSize: 12,
+              }}
+            >
+              <div className="section-title">实际使用链路（CCS 路由）</div>
+              <div className="secondary">
+                {s.routeStatus
+                  ? statusBadge(s.routeStatus).zh
+                  : routeAttempts.some((a) => a.ok)
+                    ? "路由请求成功"
+                    : "路由未成功"}
+              </div>
+              {s.routeSideEffectNotice && (
+                <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>
+                  {s.routeSideEffectNotice}
+                </div>
+              )}
+            </div>
+          )}
+          <div
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              padding: "6px 8px",
+              fontSize: 12,
+            }}
+          >
+            <div className="section-title">上游直连</div>
+            <div className="secondary">
+              {s.directStatus
+                ? statusBadge(s.directStatus).zh
+                : directAttempts.some((a) => a.ok)
+                  ? "直连成功"
+                  : directAttempts.length
+                    ? "直连未成功"
+                    : "未执行直连"}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="badge info result-tag">
         <CheckCircle2 size={11} /> {evidenceTag}

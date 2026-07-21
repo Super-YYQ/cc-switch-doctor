@@ -89,13 +89,15 @@ pub fn build_chat_request(
 }
 
 pub fn extract_chat_text(value: &serde_json::Value) -> Option<String> {
-    if value.get("error").is_some() {
-        return None;
+    if let Some(err) = value.get("error") {
+        if crate::diagnostics::classifier::is_meaningful_error_value(err) {
+            return None;
+        }
     }
-    value
-        .pointer("/choices/0/message/content")
-        .and_then(|v| match v {
-            serde_json::Value::String(s) => Some(s.clone()),
+    // choices[].message.content string or parts
+    if let Some(v) = value.pointer("/choices/0/message/content") {
+        match v {
+            serde_json::Value::String(s) if !s.is_empty() => return Some(s.clone()),
             serde_json::Value::Array(arr) => {
                 let mut out = String::new();
                 for part in arr {
@@ -105,14 +107,32 @@ pub fn extract_chat_text(value: &serde_json::Value) -> Option<String> {
                         out.push_str(t);
                     }
                 }
-                if out.is_empty() {
-                    None
-                } else {
-                    Some(out)
+                if !out.is_empty() {
+                    return Some(out);
                 }
             }
-            _ => None,
-        })
+            _ => {}
+        }
+    }
+    // choices[].text (legacy)
+    if let Some(s) = value
+        .pointer("/choices/0/text")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return Some(s.to_string());
+    }
+    // reasoning_content as secondary (not primary success text unless only content)
+    if let Some(s) = value
+        .pointer("/choices/0/message/reasoning_content")
+        .and_then(|x| x.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        // Prefer empty over claiming success from reasoning alone for GENERATE_OK;
+        // still return for partial detection paths.
+        return Some(s.to_string());
+    }
+    None
 }
 
 pub fn extract_chat_tool_call(value: &serde_json::Value) -> Option<(String, String)> {

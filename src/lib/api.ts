@@ -6,6 +6,7 @@ import type {
   DiagnosisMode,
   ProviderScanView,
   UpdateStatus,
+  VerifyMode,
 } from "@/types";
 
 export async function getAppInfo(): Promise<AppInfo> {
@@ -32,12 +33,14 @@ export async function estimateDiagnosis(input: {
   opaqueIds: string[];
   mode: DiagnosisMode;
   concurrency: number;
+  verifyMode?: VerifyMode;
 }): Promise<{ estimatedAttempts: number; providerCount: number; mode: DiagnosisMode }> {
   return invoke("estimate_diagnosis", {
     request: {
       opaqueIds: input.opaqueIds,
       mode: input.mode,
       concurrency: input.concurrency,
+      verifyMode: input.verifyMode ?? "auto",
     },
   });
 }
@@ -46,12 +49,14 @@ export async function startDiagnosis(input: {
   opaqueIds: string[];
   mode: DiagnosisMode;
   concurrency: number;
+  verifyMode?: VerifyMode;
 }): Promise<{ runId: string }> {
   return invoke("start_diagnosis", {
     request: {
       opaqueIds: input.opaqueIds,
       mode: input.mode,
       concurrency: input.concurrency,
+      verifyMode: input.verifyMode ?? "auto",
     },
   });
 }
