@@ -1,4 +1,8 @@
 use super::classifier::{best_classification, final_status_from_attempts};
+use super::outcome::{
+    disposition_from_skip_message, CapabilityOutcome, DirectChannelSummary, RouteChannelSummary,
+    RouteDisposition,
+};
 use super::planner::{plan_attempts, DiagnosisMode, PlannedAttempt};
 use super::route_planner::{
     build_route_request, combine_attempted_route_and_direct, plan_route_attempts, route_applicable,
@@ -89,7 +93,13 @@ pub struct ProviderDiagnosisSummary {
     pub source_id: String,
     pub display_name: String,
     pub app_label: String,
+    /// Primary provider outcome. Derived from direct when route was not attempted;
+    /// only combines route+direct when a real CCS route business request was sent.
+    /// Kept as `status` for v0.1.6 UI compatibility (alias of primary_outcome).
     pub status: String,
+    /// Explicit primary outcome (same value as `status` in v0.1.7).
+    #[serde(default)]
+    pub primary_outcome: String,
     pub current_config_ok: bool,
     pub any_success: bool,
     pub safe_base_url: String,
@@ -103,8 +113,16 @@ pub struct ProviderDiagnosisSummary {
     pub evidence: Vec<String>,
     pub attempts: Vec<AttemptResult>,
     pub confidence: String,
+    /// Layered direct-channel summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct: Option<DirectChannelSummary>,
+    /// Layered route-channel summary (disposition is never primary).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<RouteChannelSummary>,
+    /// Legacy flat route status code (derived from route.overall_status / disposition).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route_status: Option<String>,
+    /// Legacy flat direct status code (derived from direct.status).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direct_status: Option<String>,
     #[serde(default)]
@@ -141,6 +159,7 @@ pub async fn run_diagnosis(
                     display_name: "HTTP 客户端".into(),
                     app_label: String::new(),
                     status: "UNKNOWN_ERROR".into(),
+                    primary_outcome: "UNKNOWN_ERROR".into(),
                     current_config_ok: false,
                     any_success: false,
                     safe_base_url: String::new(),
@@ -154,6 +173,8 @@ pub async fn run_diagnosis(
                     evidence: vec![],
                     attempts: vec![],
                     confidence: "low".into(),
+                    direct: None,
+                    route: None,
                     route_status: None,
                     direct_status: None,
                     route_side_effect_notice: None,
@@ -288,13 +309,16 @@ async fn diagnose_one(
     let model_is_guessed = provider.configured_model.is_none();
 
     // --- CCS local route channel ---
-    // route_classification / route_target_mismatch are auxiliary metadata for the UI.
-    // They only participate in Provider primary status when a real route HTTP request
-    // was sent (see route_attempted below).
+    // Route disposition is auxiliary metadata. It only participates in Provider
+    // primary status when a real route HTTP request was sent (route_attempted).
     let mut route_ok: Option<bool> = None;
-    let mut route_classification: Option<String> = None;
     let mut route_target_mismatch = false;
     let mut route_notice: Option<String> = None;
+    let mut route_disposition = RouteDisposition::NotRequested;
+    let mut route_generate: Option<CapabilityOutcome> = None;
+    let mut route_streaming: Option<CapabilityOutcome> = None;
+    let mut route_actual_provider_id: Option<String> = None;
+    let mut route_actual_provider_name: Option<String> = None;
     let route_index_base = 10_000usize;
 
     if let Some(ref routing_view) = routing {
@@ -306,9 +330,9 @@ async fn diagnose_one(
                     .map(|g| g.contains(&app_key))
                     .unwrap_or(false);
                 if already {
-                    // Another provider in this run already consumed the app route budget.
-                    // Surface as auxiliary disposition only — never primary.
-                    route_classification = Some("CCS_ROUTE_NOT_APPLICABLE".into());
+                    // Another provider already consumed the app route budget this run.
+                    // Disposition only — never primary for this non-leader provider.
+                    route_disposition = RouteDisposition::NotCurrentTarget;
                 } else {
                     let rplans = plan_route_attempts(&provider, routing_view, mode, &app_row);
                     let mut sent = 0usize;
@@ -349,6 +373,7 @@ async fn diagnose_one(
                         result.requested_protocol = Some(rplan.protocol);
                         if result.http_sent {
                             sent += 1;
+                            route_disposition = RouteDisposition::Attempted;
                         }
                         if result.ok {
                             route_ok = Some(true);
@@ -363,6 +388,9 @@ async fn diagnose_one(
                                     .find(|a| a.app_type == provider.app_type.as_str())
                                 {
                                     if let Some(act) = &app.active_provider_id {
+                                        route_actual_provider_id = Some(act.clone());
+                                        route_actual_provider_name =
+                                            app.active_provider_name.clone();
                                         if act != exp {
                                             route_target_mismatch = true;
                                             result.classification =
@@ -377,7 +405,13 @@ async fn diagnose_one(
                         } else if route_ok.is_none() {
                             route_ok = Some(false);
                         }
-                        route_classification = Some(result.classification.clone());
+                        let cap =
+                            CapabilityOutcome::from_ok(result.ok, result.classification.clone());
+                        if rplan.stream {
+                            route_streaming = Some(cap);
+                        } else {
+                            route_generate = Some(cap);
+                        }
                         emit(DiagnosisEvent::AttemptFinished {
                             run_id: run_id.to_string(),
                             opaque_id: provider.opaque_id.clone(),
@@ -390,6 +424,9 @@ async fn diagnose_one(
                         if let Ok(mut g) = route_apps_sent.lock() {
                             g.insert(app_key);
                         }
+                    } else if matches!(route_disposition, RouteDisposition::NotRequested) {
+                        // Planned but never sent (budget/cancel/build failure).
+                        route_disposition = RouteDisposition::NotConfigured;
                     }
                     if route_notice.is_none() && app_row.auto_failover_enabled {
                         route_notice = Some(route_side_effect_notice(true));
@@ -397,22 +434,29 @@ async fn diagnose_one(
                 }
             }
             RouteApplicability::NotRunning => {
-                route_classification = Some("CCS_ROUTE_NOT_RUNNING".into());
+                route_disposition = RouteDisposition::NotRunning;
             }
             RouteApplicability::NotCurrentTarget => {
-                route_classification = Some("CCS_ROUTE_NOT_APPLICABLE".into());
+                route_disposition = RouteDisposition::NotCurrentTarget;
             }
-            RouteApplicability::TargetMismatch { .. } => {
-                // Pre-send applicability only: keep as route_status, not primary.
-                route_classification = Some("CCS_ROUTE_TARGET_MISMATCH".into());
+            RouteApplicability::TargetMismatch {
+                actual,
+                actual_name,
+                ..
+            } => {
+                // Pre-send applicability only: disposition, not primary.
+                route_disposition = RouteDisposition::NotCurrentTarget;
+                route_actual_provider_id = Some(actual);
+                route_actual_provider_name = actual_name;
             }
-            RouteApplicability::Skip(_msg) => {
-                // DirectOnly / not configured / non-loopback / app disabled, etc.
-                route_classification = Some("CCS_ROUTE_NOT_APPLICABLE".into());
+            RouteApplicability::Skip(msg) => {
+                route_disposition = disposition_from_skip_message(&msg);
             }
         }
     } else if verify_mode == VerifyMode::DirectAndRoute {
-        route_classification = Some("CCS_ROUTE_NOT_RUNNING".into());
+        route_disposition = RouteDisposition::NotRunning;
+    } else if verify_mode == VerifyMode::DirectOnly {
+        route_disposition = RouteDisposition::NotRequested;
     }
 
     for (index, plan) in plans.iter().enumerate() {
@@ -776,10 +820,11 @@ async fn diagnose_one(
     let route_attempted = attempts
         .iter()
         .any(|a| a.channel == DiagnosisChannel::CcsLocalRoute && a.http_sent);
-    // When another provider already consumed the app route budget, mark that as
-    // auxiliary disposition rather than a primary error.
-    let route_status_str = route_classification.clone();
-    let status = if provider.skip_reason.is_some() {
+    if route_attempted {
+        route_disposition = RouteDisposition::Attempted;
+    }
+
+    let primary_status = if provider.skip_reason.is_some() {
         "MANAGED_AUTH_SKIPPED".into()
     } else if route_attempted {
         // Only combine when a real route HTTP request was sent.
@@ -796,6 +841,75 @@ async fn diagnose_one(
         // BlockedNonLoopback / already-deduped app route → primary = direct.
         direct_status.clone()
     };
+    let status = primary_status.clone();
+
+    let direct_attempted = attempts.iter().any(|a| {
+        a.channel == DiagnosisChannel::DirectUpstream && (a.http_sent || a.reused_from_cache)
+    });
+    let best_direct_idx = attempts.iter().enumerate().find_map(|(i, a)| {
+        if a.channel == DiagnosisChannel::DirectUpstream && a.ok {
+            Some(i)
+        } else {
+            None
+        }
+    });
+    let direct_summary = DirectChannelSummary {
+        attempted: direct_attempted || provider.skip_reason.is_some(),
+        status: direct_status.clone(),
+        success: any_ok
+            && attempts
+                .iter()
+                .any(|a| a.channel == DiagnosisChannel::DirectUpstream && a.ok),
+        native_success: direct_native_ok,
+        best_attempt_index: best_direct_idx,
+    };
+
+    let route_overall = if route_attempted {
+        if route_target_mismatch {
+            Some("CCS_ROUTE_TARGET_MISMATCH".into())
+        } else if route_ok == Some(true) {
+            Some("CCS_ROUTE_OK".into())
+        } else if route_ok == Some(false) {
+            // Prefer generate failure status when present.
+            route_generate
+                .as_ref()
+                .map(|c| c.status.clone())
+                .or_else(|| route_streaming.as_ref().map(|c| c.status.clone()))
+                .or_else(|| Some("CCS_ROUTE_FAILED".into()))
+        } else {
+            None
+        }
+    } else {
+        match route_disposition {
+            RouteDisposition::NotRunning => Some("CCS_ROUTE_NOT_RUNNING".into()),
+            RouteDisposition::NotCurrentTarget => Some("CCS_ROUTE_NOT_APPLICABLE".into()),
+            RouteDisposition::NotConfigured
+            | RouteDisposition::UnsupportedApp
+            | RouteDisposition::BlockedNonLoopback => Some("CCS_ROUTE_NOT_APPLICABLE".into()),
+            RouteDisposition::NotRequested => None,
+            RouteDisposition::Attempted => None,
+        }
+    };
+
+    let mut route_summary = RouteChannelSummary {
+        disposition: route_disposition,
+        attempted: route_attempted,
+        generate: route_generate,
+        streaming: route_streaming,
+        overall_status: route_overall.clone(),
+        actual_provider_id: route_actual_provider_id,
+        actual_provider_name: route_actual_provider_name,
+        failover_count_before: None,
+        failover_count_after: None,
+        notice: route_notice.clone(),
+    };
+    let route_status_str = route_summary
+        .legacy_route_status_code()
+        .or(route_overall.clone());
+    // Keep overall_status populated for Attempted path.
+    if route_summary.overall_status.is_none() {
+        route_summary.overall_status = route_status_str.clone();
+    }
 
     let mut suggestion = build_suggestion(
         &provider,
@@ -822,25 +936,29 @@ async fn diagnose_one(
         suggestion = "CCS 路由与上游直连均失败。请先查看直连错误与路由尝试链。".into();
     } else if !route_attempted {
         // Route disposition is auxiliary only — never rewrite the direct-based suggestion.
-        if let Some(rs) = route_status_str.as_deref() {
-            match rs {
-                "CCS_ROUTE_NOT_RUNNING" => {
-                    suggestion = format!(
-                        "{suggestion} （辅助：CCS 路由已配置但未运行，本次未执行路由验证。）"
-                    );
-                }
-                "CCS_ROUTE_NOT_APPLICABLE" => {
-                    suggestion = format!(
-                        "{suggestion} （辅助：CCS 路由未验证——非当前路由目标、仅直连模式，或该 App 路由不可用。）"
-                    );
-                }
-                "CCS_ROUTE_TARGET_MISMATCH" => {
-                    suggestion = format!(
-                        "{suggestion} （辅助：所选 Provider 与当前 CCS 路由目标不一致，未执行该 Provider 的路由业务请求。）"
-                    );
-                }
-                _ => {}
+        match route_disposition {
+            RouteDisposition::NotRunning => {
+                suggestion =
+                    format!("{suggestion} （辅助：CCS 路由已配置但未运行，本次未执行路由验证。）");
             }
+            RouteDisposition::NotCurrentTarget => {
+                suggestion = format!(
+                    "{suggestion} （辅助：CCS 路由未验证——该 Provider 不是当前 CCS 路由目标。）"
+                );
+            }
+            RouteDisposition::NotRequested => {
+                if verify_mode == VerifyMode::DirectOnly {
+                    // DirectOnly: silent, no auxiliary noise.
+                }
+            }
+            RouteDisposition::NotConfigured
+            | RouteDisposition::UnsupportedApp
+            | RouteDisposition::BlockedNonLoopback => {
+                suggestion = format!(
+                    "{suggestion} （辅助：CCS 路由未验证——配置不可用、非 loopback 或应用不支持。）"
+                );
+            }
+            RouteDisposition::Attempted => {}
         }
     }
     if model_is_guessed && any_ok {
@@ -922,6 +1040,7 @@ async fn diagnose_one(
         display_name: provider.display_name.clone(),
         app_label: provider.app_type.label_zh().to_string(),
         status: status.clone(),
+        primary_outcome: primary_status,
         current_config_ok: current_ok,
         any_success: any_ok,
         safe_base_url: provider.safe_base_url.clone(),
@@ -939,6 +1058,8 @@ async fn diagnose_one(
         evidence,
         attempts,
         confidence,
+        direct: Some(direct_summary),
+        route: Some(route_summary),
         route_status: route_status_str,
         direct_status: Some(direct_status),
         route_side_effect_notice: route_notice,
