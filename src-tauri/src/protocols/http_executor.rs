@@ -7,9 +7,7 @@ use super::types::{
     MAX_ERROR_BYTES,
 };
 use crate::ccs_adapter::ProtocolKind;
-use crate::diagnostics::classifier::{
-    classify_structured_error_envelope, classify_with_evidence,
-};
+use crate::diagnostics::classifier::{classify_structured_error_envelope, classify_with_evidence};
 use crate::security::origin::SameOriginPolicy;
 use crate::security::redact::{sanitize_url_for_display, truncate_utf8, SecretRedactor};
 use futures_util::StreamExt;
