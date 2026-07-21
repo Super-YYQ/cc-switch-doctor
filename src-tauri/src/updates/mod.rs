@@ -100,24 +100,13 @@ pub async fn check_updates_now() -> UpdateStatus {
 }
 
 fn format_cc_switch_status(latest: &str, verified: &str, observed: &str) -> String {
+    let _ = observed;
     if latest == verified {
         format!("CC Switch 最新：{latest}；Doctor 已验证：{verified}；状态：已验证")
-    } else if is_newer(latest, verified) || latest != verified {
-        // Prefer explicit "not yet verified" when latest diverges from verified baseline.
-        let base = format!(
-            "CC Switch 最新：{latest}；Doctor 已验证：{verified}；状态：发现新版本，尚未完成兼容验证"
-        );
-        if latest != observed && !observed.is_empty() {
-            format!(
-                "{base}。检测到 CC Switch 新版本，但 Doctor 尚未完成该版本的兼容验证。当前不会自动升级兼容结论。"
-            )
-        } else {
-            format!(
-                "{base}。检测到 CC Switch 新版本，但 Doctor 尚未完成该版本的兼容验证。当前不会自动升级兼容结论。"
-            )
-        }
     } else {
-        format!("CC Switch 最新：{latest}；Doctor 已验证：{verified}")
+        format!(
+            "CC Switch 最新：{latest}；Doctor 已验证：{verified}；状态：发现新版本，尚未完成兼容验证。检测到 CC Switch 新版本，但 Doctor 尚未完成该版本的兼容验证。当前不会自动升级兼容结论。"
+        )
     }
 }
 
