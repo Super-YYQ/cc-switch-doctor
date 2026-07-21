@@ -265,11 +265,7 @@ pub async fn probe_local_route(
     connect_host: &str,
     port: u16,
 ) -> (bool, bool, Option<ProxyStatusSnapshot>) {
-    let base = if connect_host.contains(':') && !connect_host.starts_with('[') {
-        format!("http://[{connect_host}]:{port}")
-    } else {
-        format!("http://{connect_host}:{port}")
-    };
+    let base = route_base_url(connect_host, port);
 
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_millis(1500))
@@ -288,18 +284,44 @@ pub async fn probe_local_route(
         Err(_) => false,
     };
 
-    let status_url = format!("{base}/status");
-    let status_snap = match client.get(&status_url).send().await {
-        Ok(r) if r.status().is_success() => {
-            let text = r.text().await.unwrap_or_default();
-            parse_status_json(&text)
-        }
-        _ => None,
-    };
-
+    let status_snap = probe_status_only(connect_host, port).await;
     let running = status_snap.as_ref().map(|s| s.running).unwrap_or(health_ok);
 
     (health_ok, running, status_snap)
+}
+
+/// Lightweight GET /status only (loopback). Used for before/after route target checks.
+/// Does not send provider keys. Failure returns None without panicking.
+pub async fn probe_status_only(connect_host: &str, port: u16) -> Option<ProxyStatusSnapshot> {
+    let base = route_base_url(connect_host, port);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(1500))
+        .connect_timeout(Duration::from_millis(800))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .build()
+        .ok()?;
+    let status_url = format!("{base}/status");
+    match client.get(&status_url).send().await {
+        Ok(r) if r.status().is_success() => {
+            let text = r.text().await.ok()?;
+            parse_status_json(&text)
+        }
+        _ => None,
+    }
+}
+
+/// Active provider id for a given app in a status snapshot, if present.
+pub fn active_provider_for_app<'a>(
+    snap: &'a ProxyStatusSnapshot,
+    app_type: &str,
+) -> Option<(&'a str, Option<&'a str>)> {
+    if let Some(t) = snap.active_targets.iter().find(|t| t.app_type == app_type) {
+        return Some((t.provider_id.as_str(), Some(t.provider_name.as_str())));
+    }
+    snap.current_provider_id
+        .as_deref()
+        .map(|id| (id, snap.current_provider.as_deref()))
 }
 
 fn parse_status_json(text: &str) -> Option<ProxyStatusSnapshot> {
