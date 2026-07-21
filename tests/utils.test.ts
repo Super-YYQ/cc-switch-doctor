@@ -3,7 +3,10 @@ import {
   assertNoFullKeyInDom,
   estimateClientSide,
   filterProviders,
+  groupAttemptsByCanonical,
   hostFromUrl,
+  primaryStatusCode,
+  routeDispositionLabel,
   statusBadge,
 } from "@/lib/utils";
 import type { ProviderListItem } from "@/types";
@@ -88,6 +91,57 @@ describe("statusBadge", () => {
     expect(statusBadge("CCS_ROUTE_OK_DIRECT_NATIVE_OK").kind).toBe("ok");
     expect(statusBadge("CCS_ROUTE_FAILED_DIRECT_OK").kind).toBe("warn");
     expect(statusBadge("CCS_ROUTE_AND_DIRECT_FAILED").kind).toBe("danger");
+  });
+});
+
+describe("primaryStatusCode and routeDispositionLabel", () => {
+  it("prefers primaryOutcome over legacy status", () => {
+    expect(
+      primaryStatusCode({ status: "CCS_ROUTE_NOT_APPLICABLE", primaryOutcome: "NETWORK_UNREACHABLE" }),
+    ).toBe("NETWORK_UNREACHABLE");
+    expect(primaryStatusCode({ status: "AUTH_INVALID" })).toBe("AUTH_INVALID");
+  });
+
+  it("maps not_current_target to neutral 未验证 copy", () => {
+    const d = routeDispositionLabel("not_current_target", "CCS_ROUTE_NOT_APPLICABLE");
+    expect(d.title).toBe("未验证");
+    expect(d.detail).toContain("不是当前");
+    expect(d.kind).toBe("skip");
+  });
+
+  it("maps not_requested for DirectOnly", () => {
+    const d = routeDispositionLabel("not_requested");
+    expect(d.title).toBe("未请求");
+    expect(d.kind).toBe("skip");
+  });
+});
+
+describe("groupAttemptsByCanonical", () => {
+  it("collapses cache reuse into real-send counts", () => {
+    const groups = groupAttemptsByCanonical([
+      {
+        url: "https://api.example.com/v1/messages",
+        protocol: "Anthropic Messages",
+        classification: "NETWORK_UNREACHABLE",
+        httpSent: true,
+      },
+      {
+        url: "https://api.example.com/v1/messages",
+        protocol: "Anthropic Messages",
+        classification: "NETWORK_UNREACHABLE",
+        reusedFromCache: true,
+      },
+      {
+        url: "https://api.example.com/v1/messages",
+        protocol: "Anthropic Messages",
+        classification: "NETWORK_UNREACHABLE",
+        reusedFromCache: true,
+      },
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].realSends).toBe(1);
+    expect(groups[0].cacheHits).toBe(2);
+    expect(groups[0].finalStatus).toBe("NETWORK_UNREACHABLE");
   });
 });
 

@@ -433,7 +433,7 @@ export default function App() {
 
   const statusById = useMemo(() => {
     const m = new Map<string, string>();
-    for (const s of summaries) m.set(s.opaqueId, s.status);
+    for (const s of summaries) m.set(s.opaqueId, s.primaryOutcome || s.status);
     return m;
   }, [summaries]);
 

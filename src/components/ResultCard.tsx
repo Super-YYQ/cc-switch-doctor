@@ -1,6 +1,14 @@
 import { Copy, CheckCircle2 } from "lucide-react";
 import type { ErrorEvidence, ProviderDiagnosisSummary } from "@/types";
-import { confidenceLabel, hostFromUrl, possibleCauses, statusBadge } from "@/lib/utils";
+import {
+  confidenceLabel,
+  groupAttemptsByCanonical,
+  hostFromUrl,
+  possibleCauses,
+  primaryStatusCode,
+  routeDispositionLabel,
+  statusBadge,
+} from "@/lib/utils";
 import { useState } from "react";
 
 interface Props {
@@ -30,7 +38,9 @@ function formatEvidence(status: number | null | undefined, e: ErrorEvidence): st
 }
 
 export function ResultCard({ summary: s, onCopy }: Props) {
-  const b = statusBadge(s.status);
+  // Primary badge = primaryOutcome only (never route disposition alone).
+  const primaryCode = primaryStatusCode(s);
+  const b = statusBadge(primaryCode);
   const [openAttempts, setOpenAttempts] = useState(false);
   const [openEvidence, setOpenEvidence] = useState(false);
   const [openDebug, setOpenDebug] = useState(false);
@@ -51,7 +61,16 @@ export function ResultCard({ summary: s, onCopy }: Props) {
 
   const routeAttempts = s.attempts.filter((a) => a.channel === "ccs_local_route");
   const directAttempts = s.attempts.filter((a) => !a.channel || a.channel === "direct_upstream");
-  const showChannels = routeAttempts.length > 0 || !!s.routeStatus || !!s.directStatus;
+  const hasRouteMeta = !!s.route || !!s.routeStatus || routeAttempts.length > 0;
+  const hasDirectMeta = !!s.direct || !!s.directStatus || directAttempts.length > 0;
+  const showChannels = hasRouteMeta || hasDirectMeta;
+
+  const directStatusCode = s.direct?.status || s.directStatus || null;
+  const routeDisp = routeDispositionLabel(s.route?.disposition, s.routeStatus);
+  const routeAttempted = s.route?.attempted === true || routeAttempts.some((a) => a.httpSent);
+
+  const realSendCount = s.attempts.filter((a) => a.httpSent).length;
+  const grouped = groupAttemptsByCanonical(s.attempts);
 
   return (
     <article className={`result-card ${b.kind}`}>
@@ -61,7 +80,14 @@ export function ResultCard({ summary: s, onCopy }: Props) {
             <strong className="result-title">
               {s.appLabel} / {s.displayName}
             </strong>
-            <span className={`badge ${b.kind}`}>{b.zh}</span>
+            <span className={`badge ${b.kind}`} title={primaryCode}>
+              {b.zh}
+            </span>
+            {hasRouteMeta && !routeAttempted && (
+              <span className="badge skip" title={routeDisp.detail}>
+                路由未验证
+              </span>
+            )}
           </div>
           <div className="mono muted ellipsis result-host" title={s.safeBaseUrl}>
             {s.safeBaseUrl && s.safeBaseUrl !== "—" ? hostFromUrl(s.safeBaseUrl) : "—"}
@@ -70,35 +96,13 @@ export function ResultCard({ summary: s, onCopy }: Props) {
         <span className="badge">可信度 {confidenceLabel(s.confidence)}</span>
       </div>
 
+      <div className="section-title" style={{ marginTop: 4 }}>
+        诊断结论
+      </div>
       <p className="result-conclusion">{conclusion}</p>
 
       {showChannels && (
         <div style={{ display: "grid", gap: 6, marginBottom: 8 }}>
-          {(routeAttempts.length > 0 || s.routeStatus) && (
-            <div
-              style={{
-                border: "1px solid var(--border)",
-                borderRadius: 8,
-                padding: "6px 8px",
-                background: "var(--bg-soft)",
-                fontSize: 12,
-              }}
-            >
-              <div className="section-title">实际使用链路（CCS 路由）</div>
-              <div className="secondary">
-                {s.routeStatus
-                  ? statusBadge(s.routeStatus).zh
-                  : routeAttempts.some((a) => a.ok)
-                    ? "路由请求成功"
-                    : "路由未成功"}
-              </div>
-              {s.routeSideEffectNotice && (
-                <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>
-                  {s.routeSideEffectNotice}
-                </div>
-              )}
-            </div>
-          )}
           <div
             style={{
               border: "1px solid var(--border)",
@@ -109,8 +113,8 @@ export function ResultCard({ summary: s, onCopy }: Props) {
           >
             <div className="section-title">上游直连</div>
             <div className="secondary">
-              {s.directStatus
-                ? statusBadge(s.directStatus).zh
+              {directStatusCode
+                ? statusBadge(directStatusCode).zh
                 : directAttempts.some((a) => a.ok)
                   ? "直连成功"
                   : directAttempts.length
@@ -118,11 +122,78 @@ export function ResultCard({ summary: s, onCopy }: Props) {
                     : "未执行直连"}
             </div>
           </div>
+          {(hasRouteMeta || s.routeSideEffectNotice) && (
+            <div
+              style={{
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                padding: "6px 8px",
+                background: "var(--bg-soft)",
+                fontSize: 12,
+              }}
+            >
+              <div className="section-title">CCS 路由</div>
+              <div className="secondary">
+                {routeAttempted ? (
+                  <>
+                    {s.route?.generate && (
+                      <div>
+                        基础推理：{s.route.generate.success ? "成功" : "失败"}
+                        {s.route.generate.status ? `（${s.route.generate.status}）` : ""}
+                      </div>
+                    )}
+                    {s.route?.streaming && (
+                      <div>
+                        流式输出：{s.route.streaming.success ? "成功" : "不支持或失败"}
+                        {s.route.streaming.status ? `（${s.route.streaming.status}）` : ""}
+                      </div>
+                    )}
+                    {!s.route?.generate && (
+                      <div>
+                        {s.routeStatus
+                          ? statusBadge(s.routeStatus).zh
+                          : routeAttempts.some((a) => a.ok)
+                            ? "路由请求成功"
+                            : "路由未成功"}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <span className={`badge ${routeDisp.kind}`} style={{ marginRight: 6 }}>
+                        {routeDisp.title}
+                      </span>
+                      {routeDisp.detail}
+                    </div>
+                  </>
+                )}
+              </div>
+              {s.route?.actualProviderName && (
+                <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>
+                  实际处理 Provider：{s.route.actualProviderName}
+                  {s.route.actualProviderId ? `（${s.route.actualProviderId}）` : ""}
+                </div>
+              )}
+              {(s.route?.failoverCountBefore != null || s.route?.failoverCountAfter != null) && (
+                <div className="muted" style={{ marginTop: 2, fontSize: 11 }}>
+                  故障转移次数：{s.route.failoverCountBefore ?? "—"} →{" "}
+                  {s.route.failoverCountAfter ?? "—"}
+                </div>
+              )}
+              {(s.route?.notice || s.routeSideEffectNotice) && (
+                <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>
+                  {s.route?.notice || s.routeSideEffectNotice}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
       <div className="badge info result-tag">
         <CheckCircle2 size={11} /> {evidenceTag}
+        {realSendCount > 0 ? ` · 真实请求 ${realSendCount}` : ""}
       </div>
 
       {protocolVariantNote && <div className="result-variant muted">{protocolVariantNote}</div>}
@@ -137,11 +208,11 @@ export function ResultCard({ summary: s, onCopy }: Props) {
         </ul>
       )}
 
-      {possibleCauses(s.status) && (
+      {possibleCauses(primaryCode) && (
         <div className="result-causes">
           <div className="section-title">可能原因</div>
           <ul>
-            {possibleCauses(s.status)!.map((c) => (
+            {possibleCauses(primaryCode)!.map((c) => (
               <li key={c}>{c}</li>
             ))}
           </ul>
@@ -186,11 +257,19 @@ export function ResultCard({ summary: s, onCopy }: Props) {
         open={openAttempts}
         onToggle={(e) => setOpenAttempts((e.target as HTMLDetailsElement).open)}
       >
-        <summary>尝试链（{s.attempts.length}）</summary>
+        <summary>
+          尝试链（{s.attempts.length} · 真实发送 {realSendCount}）
+        </summary>
         <ul className="result-evidence-list">
-          {s.evidence.map((e) => (
-            <li key={e} className="mono muted">
-              {e}
+          {grouped.map((g) => (
+            <li key={g.key} className="mono muted">
+              {g.label}
+              <br />
+              真实发送 {g.realSends} 次
+              {g.cacheHits > 0 ? ` · 缓存复用 ${g.cacheHits} 次` : ""}
+              <br />
+              最终状态：{g.finalStatus}
+              {statusBadge(g.finalStatus).zh ? `（${statusBadge(g.finalStatus).zh}）` : ""}
             </li>
           ))}
         </ul>
@@ -203,6 +282,7 @@ export function ResultCard({ summary: s, onCopy }: Props) {
       >
         <summary>调试日志（高级）</summary>
         <pre className="debug-log mono muted">
+          {`primary=${primaryCode}\ndirect=${directStatusCode ?? "—"}\nroute.disposition=${s.route?.disposition ?? "—"}\nrouteStatus=${s.routeStatus ?? "—"}\n`}
           {s.attempts
             .map(
               (a, i) =>
@@ -229,12 +309,18 @@ export function ResultCard({ summary: s, onCopy }: Props) {
               [
                 `CC Switch Doctor 诊断摘要`,
                 `${s.appLabel} / ${s.displayName}`,
-                `状态: ${s.status}（${b.zh}）`,
+                `主状态: ${primaryCode}（${b.zh}）`,
+                directStatusCode
+                  ? `上游直连: ${directStatusCode}（${statusBadge(directStatusCode).zh}）`
+                  : null,
+                hasRouteMeta ? `CCS 路由: ${routeDisp.title} — ${routeDisp.detail}` : null,
                 s.suggestion,
                 evidenceTag,
                 ...s.evidence,
                 "（完整 Key 从未包含在此摘要中）",
-              ].join("\n"),
+              ]
+                .filter(Boolean)
+                .join("\n"),
               "已复制诊断摘要",
             )
           }
