@@ -11,7 +11,7 @@ use super::types::{
     MAX_ERROR_BYTES,
 };
 use crate::ccs_adapter::ProtocolKind;
-use crate::diagnostics::classifier::classify_http_failure;
+use crate::diagnostics::classifier::{classify_http_failure, classify_with_evidence};
 use crate::security::origin::SameOriginPolicy;
 use crate::security::redact::{sanitize_url_for_display, truncate_utf8, SecretRedactor};
 use futures_util::StreamExt;
@@ -72,6 +72,7 @@ impl HttpExecutor {
                 reused_from_cache: false,
                 suggestion_note: None,
                 token_limit_field: None,
+                error_evidence: vec![],
             };
         }
 
@@ -100,6 +101,7 @@ impl HttpExecutor {
                         reused_from_cache: false,
                         suggestion_note: None,
                         token_limit_field: None,
+                        error_evidence: vec![],
                     },
                     redactor,
                 );
@@ -145,6 +147,7 @@ impl HttpExecutor {
                     reused_from_cache: false,
                     suggestion_note: None,
                     token_limit_field: None,
+                    error_evidence: vec![],
                 };
             }
             res = send_fut => res,
@@ -186,6 +189,7 @@ impl HttpExecutor {
                     reused_from_cache: false,
                     suggestion_note: None,
                     token_limit_field: None,
+                    error_evidence: vec![],
                 };
             }
         };
@@ -232,6 +236,7 @@ impl HttpExecutor {
                 reused_from_cache: false,
                 suggestion_note: None,
                 token_limit_field: None,
+                error_evidence: vec![],
             };
         }
 
@@ -266,6 +271,7 @@ impl HttpExecutor {
                     reused_from_cache: false,
                     suggestion_note: None,
                     token_limit_field: None,
+                    error_evidence: vec![],
                 };
             }
         };
@@ -292,6 +298,7 @@ impl HttpExecutor {
                 reused_from_cache: false,
                 suggestion_note: None,
                 token_limit_field: None,
+                error_evidence: vec![],
             };
         }
 
@@ -322,6 +329,7 @@ impl HttpExecutor {
                 reused_from_cache: false,
                 suggestion_note: None,
                 token_limit_field: None,
+                error_evidence: vec![],
             };
         }
 
@@ -351,7 +359,47 @@ impl HttpExecutor {
                 reused_from_cache: false,
                 suggestion_note: None,
                 token_limit_field: None,
+                error_evidence: vec![],
             };
+        }
+
+        // Non-standard business errors on 2xx (code/msg without top-level error)
+        {
+            let (cls, ev) = classify_with_evidence(status_code, &body_text, None);
+            if matches!(
+                cls.as_str(),
+                "AUTH_INVALID"
+                    | "AUTH_PERMISSION_DENIED"
+                    | "QUOTA_EXHAUSTED"
+                    | "RATE_LIMITED"
+                    | "GATEWAY_OR_WAF"
+                    | "MODEL_NOT_FOUND"
+            ) {
+                let excerpt = truncate(&redactor.redact(&body_text), 512);
+                return AttemptResult {
+                    ok: false,
+                    partial: false,
+                    status_code: Some(status_code),
+                    latency_ms,
+                    ttft_ms: None,
+                    protocol: req.protocol,
+                    model: req.model.clone(),
+                    url: safe_url,
+                    stream: false,
+                    purpose: req.purpose,
+                    extracted_text: None,
+                    tool_call_ok: None,
+                    error_kind: Some("business_error".into()),
+                    error_message: Some(excerpt.clone()),
+                    response_excerpt: Some(excerpt),
+                    classification: cls,
+                    http_sent: true,
+                    reused_from_cache: false,
+                    suggestion_note: None,
+                    token_limit_field: None,
+                    error_evidence: ev,
+                };
+            }
         }
 
         if req.purpose == RequestPurpose::ToolCall {
@@ -395,6 +443,7 @@ impl HttpExecutor {
                 reused_from_cache: false,
                 suggestion_note: None,
                 token_limit_field: None,
+                error_evidence: vec![],
             };
         }
 
@@ -446,6 +495,7 @@ impl HttpExecutor {
                     reused_from_cache: false,
                     suggestion_note: None,
                     token_limit_field: None,
+                    error_evidence: vec![],
                 }
             }
             None => AttemptResult {
@@ -464,11 +514,19 @@ impl HttpExecutor {
                 error_kind: Some("parse".into()),
                 error_message: Some("HTTP 成功但无法按协议解析文本".into()),
                 response_excerpt: Some(truncate(&redactor.redact(&body_text), 512)),
-                classification: "UNSUPPORTED_PROTOCOL".into(),
+                classification: {
+                    let (cls, _) = classify_with_evidence(status_code, &body_text, None);
+                    if cls != "UNKNOWN_ERROR" {
+                        cls
+                    } else {
+                        "RESPONSE_FORMAT_MISMATCH".into()
+                    }
+                },
                 http_sent: true,
                 reused_from_cache: false,
                 suggestion_note: None,
                 token_limit_field: None,
+                error_evidence: vec![],
             },
         }
     }
@@ -507,6 +565,7 @@ impl HttpExecutor {
                 reused_from_cache: false,
                 suggestion_note: None,
                 token_limit_field: None,
+                error_evidence: vec![],
             };
         }
 
@@ -544,6 +603,7 @@ impl HttpExecutor {
                     reused_from_cache: false,
                     suggestion_note: None,
                     token_limit_field: None,
+                    error_evidence: vec![],
                 };
             }
 
@@ -581,6 +641,7 @@ impl HttpExecutor {
                         reused_from_cache: false,
                         suggestion_note: None,
                         token_limit_field: None,
+                        error_evidence: vec![],
                     };
                 }
             };
@@ -651,6 +712,7 @@ impl HttpExecutor {
                 reused_from_cache: false,
                 suggestion_note: None,
                 token_limit_field: None,
+                error_evidence: vec![],
             };
         }
         let (ok, partial) = evaluate_text(&text);
@@ -687,6 +749,7 @@ impl HttpExecutor {
             reused_from_cache: false,
             suggestion_note: None,
             token_limit_field: None,
+            error_evidence: vec![],
         }
     }
 }

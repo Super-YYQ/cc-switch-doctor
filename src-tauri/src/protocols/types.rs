@@ -107,6 +107,8 @@ pub struct AttemptResult {
     /// Token limit field used for OpenAI Chat (if applicable).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_limit_field: Option<TokenLimitField>,
+    #[serde(default)]
+    pub error_evidence: Vec<ErrorEvidence>,
 }
 
 impl AttemptResult {
@@ -138,6 +140,7 @@ impl AttemptResult {
             reused_from_cache: false,
             suggestion_note: None,
             token_limit_field: None,
+            error_evidence: vec![],
         }
     }
 
@@ -169,6 +172,7 @@ impl AttemptResult {
             reused_from_cache: false,
             suggestion_note: None,
             token_limit_field: None,
+            error_evidence: vec![],
         }
     }
 }

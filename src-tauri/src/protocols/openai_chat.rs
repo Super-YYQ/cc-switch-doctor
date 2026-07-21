@@ -227,6 +227,7 @@ mod tests {
             reused_from_cache: false,
             suggestion_note: None,
             token_limit_field: Some(TokenLimitField::MaxCompletionTokens),
+            error_evidence: vec![],
         }
     }
 

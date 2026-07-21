@@ -100,7 +100,7 @@ export default function App() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [scan, setScan] = useState<ProviderScanView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [appFilter, setAppFilter] = useState("all");
+  const [appFilter, setAppFilter] = useState("claude");
   const [query, setQuery] = useState("");
   const [onlySelected, setOnlySelected] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -126,7 +126,8 @@ export default function App() {
   /** Replace scan data and wipe all session/result state bound to the previous DB view. */
   const applyFreshScan = useCallback((view: ProviderScanView) => {
     setScan(view);
-    setSelected(defaultSelectedIds(view.providers));
+    setSelected(new Set());
+    setAppFilter("claude");
     setActiveId(null);
     setSummaries([]);
     setLiveLog([]);
@@ -146,7 +147,7 @@ export default function App() {
     try {
       if (!isTauri()) {
         applyFreshScan(DEMO_SCAN);
-        setAppInfo({ name: "CC Switch Doctor", version: "0.1.3", doctorVersion: "0.1.3" });
+        setAppInfo({ name: "CC Switch Doctor", version: "0.1.4", doctorVersion: "0.1.4" });
         if (!hideSafetySession) setSafetyOpen(true);
         return;
       }
@@ -245,11 +246,11 @@ export default function App() {
       setRunningIds(new Set());
       setLiveLog((l) => [`完成：${ev.summaries.length} 个结果`, ...l]);
     } else if (ev.type === "run_cancelled") {
-      setRunning(false);
-      setStopping(false);
+      // Keep running=true until matching run_finished finishes cleanup (P1-4).
+      setStopping(true);
       setCurrentName(null);
       setRunningIds(new Set());
-      setLiveLog((l) => ["已取消", ...l]);
+      setLiveLog((l) => ["正在收尾…", ...l]);
     }
   }
 
@@ -404,7 +405,7 @@ export default function App() {
     try {
       if (!isTauri()) {
         setUpdates({
-          doctorVersion: "0.1.3",
+          doctorVersion: "0.1.4",
           doctorUpdateAvailable: false,
           verifiedCcSwitch: "3.17.0",
           message: "开发预览：更新检查需在应用内执行",
@@ -496,6 +497,8 @@ export default function App() {
           runningIds={runningIds}
           statusById={statusById}
           running={running}
+          schemaStatus={scan?.schema?.status}
+          canTest={scan?.canTest}
           onAppFilter={setAppFilter}
           onQuery={setQuery}
           onOnlySelected={setOnlySelected}

@@ -22,20 +22,27 @@ describe("App UI product shell", () => {
     expect(screen.getByRole("button", { name: /开始诊断|重新诊断/ })).toBeInTheDocument();
   });
 
-  it("defaults to smart mode and keeps managed row uncheckable", async () => {
+  it("defaults to Claude filter and smart mode; core filters always present", async () => {
     const user = userEvent.setup();
     render(<App />);
     await dismissSafety(user);
     expect(screen.getByRole("button", { name: "智能诊断" }).className).toMatch(/active/);
-    expect(screen.getAllByText(/已跳过|官方登录/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("tab", { name: "Claude" }).className).toMatch(/active/);
+    expect(screen.getByRole("tab", { name: "全部" }).className).not.toMatch(/active/);
+    expect(screen.getByRole("tab", { name: "Codex" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Gemini" })).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/sk-[a-zA-Z0-9]{16,}/);
   });
 
-  it("primary diagnose button enabled when CCS current auto-selected", async () => {
+  it("does not auto-check providers; start disabled until selection", async () => {
     const user = userEvent.setup();
     render(<App />);
     await dismissSafety(user);
     await screen.findByText("GLM Relay");
+    const glm = screen.getByRole("checkbox", { name: "选择 GLM Relay" }) as HTMLInputElement;
+    expect(glm.checked).toBe(false);
+    expect(screen.getByRole("button", { name: /开始诊断/ })).toBeDisabled();
+    await user.click(glm);
     expect(screen.getByRole("button", { name: /开始诊断/ })).not.toBeDisabled();
   });
 
@@ -45,30 +52,21 @@ describe("App UI product shell", () => {
     await dismissSafety(user);
     expect(screen.getByRole("button", { name: "并发 1" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "并发 3" }));
-    // still idle
     expect(screen.getByRole("button", { name: "刷新配置" })).not.toBeDisabled();
   });
 
-  it("refresh clears selection so start becomes disabled", async () => {
+  it("refresh clears selection and restores Claude filter", async () => {
     const user = userEvent.setup();
     render(<App />);
     await dismissSafety(user);
     await screen.findByText("GLM Relay");
-
-    // Current providers are auto-selected after scan
-    const glmCheck = screen.getByRole("checkbox", { name: "选择 GLM Relay" }) as HTMLInputElement;
-    expect(glmCheck.checked).toBe(true);
-    expect(screen.getByRole("button", { name: /开始诊断/ })).not.toBeDisabled();
-
-    // uncheck then refresh should re-select current
-    await user.click(glmCheck);
-    expect(glmCheck.checked).toBe(false);
-
+    await user.click(screen.getByRole("checkbox", { name: "选择 GLM Relay" }));
+    await user.click(screen.getByRole("tab", { name: "全部" }));
     await user.click(screen.getByRole("button", { name: "刷新配置" }));
-
     await waitFor(() => {
-      const again = screen.getByRole("checkbox", { name: "选择 GLM Relay" }) as HTMLInputElement;
-      expect(again.checked).toBe(true);
+      expect(screen.getByRole("tab", { name: "Claude" }).className).toMatch(/active/);
+      const glm = screen.getByRole("checkbox", { name: "选择 GLM Relay" }) as HTMLInputElement;
+      expect(glm.checked).toBe(false);
     });
   });
 
@@ -82,14 +80,17 @@ describe("App UI product shell", () => {
     articles.forEach((a) => {
       expect(a.getAttribute("role")).not.toBe("button");
     });
-    expect(screen.getAllByRole("button", { name: /查看详情/ }).length).toBeGreaterThan(0);
   });
 
-  it("refresh and pick-db enabled when idle", async () => {
+  it("more menu closes on outside click", async () => {
     const user = userEvent.setup();
     render(<App />);
     await dismissSafety(user);
-    expect(screen.getByRole("button", { name: "刷新配置" })).not.toBeDisabled();
-    expect(screen.getByRole("button", { name: "选择数据库" })).not.toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "更多操作" }));
+    expect(screen.getByRole("menuitem", { name: "全选当前筛选" })).toBeInTheDocument();
+    await user.click(screen.getByText("CC Switch Doctor"));
+    await waitFor(() => {
+      expect(screen.queryByRole("menuitem", { name: "全选当前筛选" })).not.toBeInTheDocument();
+    });
   });
 });

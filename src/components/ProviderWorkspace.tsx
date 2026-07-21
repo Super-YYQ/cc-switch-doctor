@@ -1,14 +1,19 @@
+import { useEffect, useRef, useState } from "react";
 import { Search, MoreHorizontal, X } from "lucide-react";
 import type { ProviderListItem } from "@/types";
 import { ProviderRow } from "./ProviderRow";
 
-const ALL_FILTERS: { id: string; label: string }[] = [
+/** Always show core app filters even when the current DB has zero matching rows. */
+const CORE_FILTERS: { id: string; label: string }[] = [
   { id: "all", label: "全部" },
   { id: "claude", label: "Claude" },
-  { id: "claude-desktop", label: "Claude Desktop" },
   { id: "codex", label: "Codex" },
   { id: "gemini", label: "Gemini" },
   { id: "opencode", label: "OpenCode" },
+];
+
+const EXTRA_FILTERS: { id: string; label: string }[] = [
+  { id: "claude-desktop", label: "Claude Desktop" },
   { id: "openclaw", label: "OpenClaw" },
   { id: "hermes", label: "Hermes" },
   { id: "grokbuild", label: "Grok" },
@@ -25,6 +30,8 @@ interface Props {
   runningIds: Set<string>;
   statusById: Map<string, string>;
   running: boolean;
+  schemaStatus?: string | null;
+  canTest?: boolean;
   onAppFilter: (id: string) => void;
   onQuery: (q: string) => void;
   onOnlySelected: (v: boolean) => void;
@@ -46,6 +53,8 @@ export function ProviderWorkspace({
   runningIds,
   statusById,
   running,
+  schemaStatus,
+  canTest,
   onAppFilter,
   onQuery,
   onOnlySelected,
@@ -56,7 +65,49 @@ export function ProviderWorkspace({
   onSelectCurrent,
 }: Props) {
   const presentApps = new Set(providers.map((p) => p.appType));
-  const filters = ALL_FILTERS.filter((f) => f.id === "all" || presentApps.has(f.id as never));
+  const filters = [...CORE_FILTERS, ...EXTRA_FILTERS.filter((f) => presentApps.has(f.id as never))];
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target)) return;
+      if (triggerRef.current?.contains(target)) return;
+      setMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menuOpen]);
+
+  const emptyMessage = (() => {
+    if (schemaStatus === "unknown" || schemaStatus === "unsupported" || canTest === false) {
+      return "当前 Schema 未通过兼容检查，已停止读取 Provider 配置。";
+    }
+    if (query.trim()) {
+      return "没有匹配搜索条件的配置。";
+    }
+    if (appFilter !== "all") {
+      return "当前应用筛选下没有配置。";
+    }
+    if (onlySelected) {
+      return "尚未勾选任何配置。";
+    }
+    if (providers.length === 0) {
+      return "数据库中未找到可展示的第三方配置。";
+    }
+    return "没有匹配的配置";
+  })();
 
   return (
     <section className="panel workspace-pane" style={{ padding: 12 }}>
@@ -64,11 +115,17 @@ export function ProviderWorkspace({
         Provider 配置
       </div>
 
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+      <div
+        style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}
+        role="tablist"
+        aria-label="应用筛选"
+      >
         {filters.map((f) => (
           <button
             key={f.id}
             type="button"
+            role="tab"
+            aria-selected={appFilter === f.id}
             className={`chip ${appFilter === f.id ? "active" : ""}`}
             onClick={() => onAppFilter(f.id)}
           >
@@ -117,54 +174,86 @@ export function ProviderWorkspace({
           />
           仅看已选
         </label>
-        <details style={{ position: "relative" }}>
-          <summary className="btn btn-sm" style={{ listStyle: "none", cursor: "pointer" }}>
-            <MoreHorizontal size={14} />
-          </summary>
-          <div
-            className="panel"
-            style={{
-              position: "absolute",
-              right: 0,
-              top: 36,
-              zIndex: 5,
-              padding: 8,
-              minWidth: 160,
-              display: "grid",
-              gap: 4,
-            }}
+        <div style={{ position: "relative" }}>
+          <button
+            ref={triggerRef}
+            type="button"
+            className="btn btn-sm"
+            aria-label="更多操作"
+            aria-expanded={menuOpen}
+            aria-haspopup="menu"
+            onClick={() => setMenuOpen((v) => !v)}
           >
-            <button
-              className="btn btn-sm"
-              type="button"
-              disabled={running}
-              onClick={onSelectFiltered}
+            <MoreHorizontal size={14} />
+          </button>
+          {menuOpen && (
+            <div
+              ref={menuRef}
+              className="panel"
+              role="menu"
+              style={{
+                position: "absolute",
+                right: 0,
+                top: 36,
+                zIndex: 5,
+                padding: 8,
+                minWidth: 160,
+                display: "grid",
+                gap: 4,
+              }}
             >
-              全选当前筛选
-            </button>
-            <button
-              className="btn btn-sm"
-              type="button"
-              disabled={running}
-              onClick={onClearSelection}
-            >
-              取消全选
-            </button>
-            {onSelectCurrent && (
               <button
                 className="btn btn-sm"
                 type="button"
+                role="menuitem"
                 disabled={running}
-                onClick={onSelectCurrent}
+                onClick={() => {
+                  onSelectFiltered();
+                  setMenuOpen(false);
+                }}
               >
-                选择 CCS 当前配置
+                全选当前筛选
               </button>
-            )}
-            <button className="btn btn-sm" type="button" onClick={() => onQuery("")}>
-              清除搜索
-            </button>
-          </div>
-        </details>
+              <button
+                className="btn btn-sm"
+                type="button"
+                role="menuitem"
+                disabled={running}
+                onClick={() => {
+                  onClearSelection();
+                  setMenuOpen(false);
+                }}
+              >
+                取消全选
+              </button>
+              {onSelectCurrent && (
+                <button
+                  className="btn btn-sm"
+                  type="button"
+                  role="menuitem"
+                  disabled={running}
+                  onClick={() => {
+                    onSelectCurrent();
+                    setMenuOpen(false);
+                  }}
+                >
+                  选择 CCS 当前配置
+                </button>
+              )}
+              <button
+                className="btn btn-sm"
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onQuery("");
+                  setMenuOpen(false);
+                }}
+              >
+                清除搜索
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="workspace-scroll">
@@ -182,8 +271,8 @@ export function ProviderWorkspace({
           />
         ))}
         {!filtered.length && (
-          <div className="empty-state" style={{ minHeight: 180 }}>
-            没有匹配的配置
+          <div className="empty-state" style={{ minHeight: 180 }} data-testid="provider-empty">
+            {emptyMessage}
           </div>
         )}
       </div>
