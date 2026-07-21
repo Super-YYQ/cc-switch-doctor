@@ -1,3 +1,31 @@
+## [0.1.5] — 2026-07-21
+
+### Fixed
+
+- Success responses containing `billing_usage` / `usage` no longer misclassified as `QUOTA_EXHAUSTED`
+- Free-text error heuristics only run after native and cross-protocol success parsing fails
+- Structured 2xx error envelopes (`error`, `success:false`) still detect quota/auth correctly
+- Cross-protocol response parsing (Anthropic↔OpenAI↔Responses↔Gemini) with `RESPONSE_PROTOCOL_VARIANT_OK`
+- Stream responses that return full JSON/NDJSON instead of SSE deltas now parse successfully
+- URL path secrets redacted for display, events, cache keys, and excerpts
+- Cache keys distinguish non-secret query values and never embed path keys
+- Provider-level real send budgets (Quick 2 / Smart 12 / Deep 16) in addition to Host 30
+- Incremental non-stream body reads stop at 2MB without full download
+- Content-Type `text/html` on 2xx classified as gateway/WAF before JSON parse
+- Gemini supports Header `x-goog-api-key` and Query `?key=` auth variants
+- Guessed models no longer reported as current-config success (`MODEL_GUESS_OK`)
+- Frontend `ErrorEvidence` type and ResultCard “判定依据” panel
+- Compact UI density so more providers/results fit on 768–900px height windows
+
+### Tests
+
+- Anthropic success + `billing_usage` regression
+- Cross-protocol / wrapper / stream-fallback parser tests
+- Path key redaction and cache-key hardening
+- synthetic-v13 end-to-end scan + SHA256 stability
+- Manifest schema fingerprints vs runtime allowlist consistency
+- ResultCard evidence + collapsed debug log
+
 ## [0.1.4] — 2026-07-21
 
 ### Fixed
