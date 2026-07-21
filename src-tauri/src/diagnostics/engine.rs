@@ -534,17 +534,16 @@ async fn diagnose_one(
             .collect();
         if !success_cls.is_empty() {
             // Prefer native GENERATE_OK over variants
-            if success_cls
-                .iter()
-                .any(|c| *c == "GENERATE_OK" || *c == "STREAM_OK" || *c == "TOOL_CALLING_OK")
+            if success_cls.contains(&"GENERATE_OK")
+                || success_cls.contains(&"STREAM_OK")
+                || success_cls.contains(&"TOOL_CALLING_OK")
             {
                 "GENERATE_OK".into()
-            } else if success_cls
-                .iter()
-                .any(|c| *c == "RESPONSE_PROTOCOL_VARIANT_OK" || *c == "DIRECT_PROTOCOL_VARIANT_OK")
+            } else if success_cls.contains(&"RESPONSE_PROTOCOL_VARIANT_OK")
+                || success_cls.contains(&"DIRECT_PROTOCOL_VARIANT_OK")
             {
                 "RESPONSE_PROTOCOL_VARIANT_OK".into()
-            } else if success_cls.iter().any(|c| *c == "LOOSE_RESPONSE_TEXT_OK") {
+            } else if success_cls.contains(&"LOOSE_RESPONSE_TEXT_OK") {
                 "LOOSE_RESPONSE_TEXT_OK".into()
             } else {
                 success_cls.first().unwrap_or(&"UNKNOWN_ERROR").to_string()
