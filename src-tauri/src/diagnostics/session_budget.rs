@@ -17,6 +17,16 @@ use std::sync::Mutex;
 
 pub const MAX_HOST_REQUESTS: usize = 30;
 
+/// Per-provider real HTTP send caps by mode (cache reuse does not count).
+pub fn provider_send_budget(mode: crate::diagnostics::planner::DiagnosisMode) -> usize {
+    use crate::diagnostics::planner::DiagnosisMode;
+    match mode {
+        DiagnosisMode::Quick => 2,
+        DiagnosisMode::Smart => 12,
+        DiagnosisMode::Deep => 16,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OriginKey {
     pub scheme: String,
@@ -178,10 +188,54 @@ fn canonicalize_url_for_cache(raw: &str) -> String {
     };
     let _ = u.set_username("");
     let _ = u.set_password(None);
-    // Keep path; scrub query values but keep keys (structure matters)
+    // Mask path segments that look like secrets so cache keys never embed raw keys
+    let path = u.path().to_string();
+    let masked_path: String = path
+        .split('/')
+        .map(|seg| {
+            if seg.is_empty() {
+                return seg.to_string();
+            }
+            let lower = seg.to_ascii_lowercase();
+            if (lower.starts_with("sk-") && seg.len() >= 12)
+                || (seg.len() >= 24
+                    && seg
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+                    && seg.chars().any(|c| c.is_ascii_digit()))
+            {
+                // fingerprint segment length only — never store raw secret
+                return format!("<redacted:{}>", seg.len());
+            }
+            seg.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    u.set_path(&masked_path);
+    // Keep query KEYS; replace values with "*". Distinct keys → distinct cache entries.
+    // Also fingerprint non-empty values so different query values don't collide incorrectly
+    // when only structure mattered — actually we mask values but keep key presence.
     let pairs: Vec<(String, String)> = u
         .query_pairs()
-        .map(|(k, _)| (k.to_string(), "*".into()))
+        .map(|(k, v)| {
+            // For secret-like query keys, still just "*"; for others use short hash of value
+            // so different non-secret query values don't incorrectly share cache.
+            let kl = k.to_ascii_lowercase();
+            let is_secret_key = kl.contains("key")
+                || kl.contains("token")
+                || kl.contains("auth")
+                || kl.contains("secret")
+                || kl.contains("password")
+                || kl.contains("signature");
+            if is_secret_key {
+                (k.to_string(), "*".into())
+            } else {
+                let mut hasher = Sha256::new();
+                hasher.update(v.as_bytes());
+                let dig = hasher.finalize();
+                (k.to_string(), hex::encode(&dig[..4]))
+            }
+        })
         .collect();
     if pairs.is_empty() {
         u.set_query(None);
@@ -494,6 +548,50 @@ mod tests {
         let dbg = format!("{key:?}");
         assert!(!dbg.contains("sk-secret-key-value"));
         assert!(!dbg.contains("Bearer sk-"));
+    }
+
+    #[test]
+    fn cache_key_masks_path_secret() {
+        let o = origin("api.example.com");
+        let secret = "sk-path-secret-ABCDEFGH";
+        let b = built(
+            &format!("https://api.example.com/proxy/{secret}/v1/messages"),
+            "POST",
+            AuthScheme::Bearer,
+        );
+        let key = cache_key_from_built(&o, &b, "fp", None, AuthScheme::Bearer);
+        assert!(
+            !key.canonical_url.contains(secret),
+            "raw secret in cache key: {}",
+            key.canonical_url
+        );
+        // Accept either redacted placeholder or partial mask
+        assert!(
+            key.canonical_url.contains("<redacted:")
+                || key.canonical_url.contains("***")
+                || !key.canonical_url.contains("ABCDEFGH"),
+            "expected redacted path, got {}",
+            key.canonical_url
+        );
+    }
+
+    #[test]
+    fn different_query_values_do_not_share() {
+        let o = origin("api.example.com");
+        let b1 = built(
+            "https://api.example.com/v1/x?region=us",
+            "POST",
+            AuthScheme::Bearer,
+        );
+        let b2 = built(
+            "https://api.example.com/v1/x?region=eu",
+            "POST",
+            AuthScheme::Bearer,
+        );
+        let k1 = cache_key_from_built(&o, &b1, "fp", None, AuthScheme::Bearer);
+        let k2 = cache_key_from_built(&o, &b2, "fp", None, AuthScheme::Bearer);
+        assert_ne!(k1.canonical_url, k2.canonical_url);
+        assert_ne!(k1, k2);
     }
 
     #[test]

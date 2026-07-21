@@ -33,22 +33,22 @@ export function AppHeader({
   const verified = updates?.verifiedCcSwitch ?? null;
 
   return (
-    <header className="panel" style={{ padding: "12px 16px" }}>
+    <header className="panel app-header" style={{ padding: "8px 12px" }}>
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
-          gap: 12,
-          alignItems: "flex-start",
+          gap: 10,
+          alignItems: "center",
           flexWrap: "wrap",
         }}
       >
-        <div style={{ display: "flex", gap: 12, alignItems: "center", minWidth: 0 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 0 }}>
           <div
             style={{
-              width: 40,
-              height: 40,
-              borderRadius: 12,
+              width: 32,
+              height: 32,
+              borderRadius: 10,
               background: "var(--primary-soft)",
               color: "var(--primary)",
               display: "grid",
@@ -56,14 +56,14 @@ export function AppHeader({
               flexShrink: 0,
             }}
           >
-            <Shield size={20} />
+            <Shield size={16} />
           </div>
           <div style={{ minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <strong style={{ fontSize: 18 }}>CC Switch Doctor</strong>
-              <span className="badge primary">v{appInfo?.doctorVersion ?? "0.1.2"}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <strong style={{ fontSize: 15 }}>CC Switch Doctor</strong>
+              <span className="badge primary">v{appInfo?.doctorVersion ?? "0.1.4"}</span>
             </div>
-            <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+            <div className="muted" style={{ fontSize: 11, marginTop: 1 }}>
               只读扫描 · 纯 HTTP · 不启动 AI CLI
             </div>
           </div>

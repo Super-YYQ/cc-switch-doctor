@@ -58,6 +58,13 @@ export interface ProviderScanView {
   ccSwitchVersionHint?: string | null;
 }
 
+export interface ErrorEvidence {
+  source: string;
+  code?: string | null;
+  message?: string | null;
+  matchedKeyword?: string | null;
+}
+
 export interface AttemptResult {
   ok: boolean;
   partial: boolean;
@@ -79,6 +86,7 @@ export interface AttemptResult {
   reusedFromCache?: boolean;
   suggestionNote?: string | null;
   tokenLimitField?: "max_completion_tokens" | "max_tokens" | null;
+  errorEvidence?: ErrorEvidence[];
 }
 
 export interface ProviderDiagnosisSummary {

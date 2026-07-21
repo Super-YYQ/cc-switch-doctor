@@ -1,9 +1,11 @@
 use super::classifier::{best_classification, final_status_from_attempts};
 use super::planner::{plan_attempts, DiagnosisMode, PlannedAttempt};
-use super::session_budget::{cache_key_from_built, key_fingerprint, OriginKey, SessionBudget};
+use super::session_budget::{
+    cache_key_from_built, key_fingerprint, provider_send_budget, OriginKey, SessionBudget,
+};
 use crate::ccs_adapter::{NormalizedProvider, ProtocolKind};
 use crate::protocols::anthropic::build_anthropic_request;
-use crate::protocols::gemini::build_gemini_request;
+use crate::protocols::gemini::build_gemini_request_with_auth;
 use crate::protocols::http_executor::HttpExecutor;
 use crate::protocols::openai_chat::build_chat_request;
 use crate::protocols::openai_responses::build_responses_request;
@@ -233,9 +235,32 @@ async fn diagnose_one(
     let mut stop_all = false;
     let mut tried_token_fallback = false;
     let mut token_fallback_note: Option<String> = None;
+    let mut provider_real_sends: usize = 0;
+    let provider_budget = provider_send_budget(mode);
+    let model_is_guessed = provider.configured_model.is_none();
 
     for (index, plan) in plans.iter().enumerate() {
         if cancel.is_cancelled() || stop_all {
+            break;
+        }
+        if provider_real_sends >= provider_budget {
+            let r = AttemptResult::budget_stopped(
+                plan.protocol,
+                &plan.model,
+                &crate::security::sanitize_url_for_display(&plan.base_url),
+                &format!(
+                    "已停止继续请求：该 Provider 在本模式（{:?}）下真实请求已达上限 {} 次。",
+                    mode, provider_budget
+                ),
+                "PROVIDER_BUDGET_EXHAUSTED",
+            );
+            emit(DiagnosisEvent::AttemptFinished {
+                run_id: run_id.to_string(),
+                opaque_id: provider.opaque_id.clone(),
+                index,
+                result: r.clone(),
+            });
+            attempts.push(r);
             break;
         }
         if current_ok && !plan.is_current_config {
@@ -287,14 +312,71 @@ async fn diagnose_one(
             mode,
             &session_budget,
             TokenLimitField::MaxCompletionTokens,
+            AuthScheme::XGoogApiKey,
         )
         .await;
+
+        // Gemini: if header auth fails with AUTH, try query key once
+        if plan.protocol == ProtocolKind::GeminiNative
+            && !result.ok
+            && !result.reused_from_cache
+            && matches!(
+                result.classification.as_str(),
+                "AUTH_INVALID" | "KEY_INVALID" | "AUTH_PERMISSION_DENIED" | "ENDPOINT_NOT_FOUND"
+            )
+        {
+            if result.http_sent {
+                provider_real_sends += 1;
+            }
+            emit(DiagnosisEvent::AttemptFinished {
+                run_id: run_id.to_string(),
+                opaque_id: provider.opaque_id.clone(),
+                index,
+                result: result.clone(),
+            });
+            attempts.push(result);
+
+            if provider_real_sends >= provider_budget {
+                break;
+            }
+            emit(DiagnosisEvent::AttemptStarted {
+                run_id: run_id.to_string(),
+                opaque_id: provider.opaque_id.clone(),
+                index,
+                label: "Gemini 认证兼容：Header → Query key".into(),
+                url: crate::security::sanitize_url_for_display(&plan.base_url),
+                protocol: plan.protocol.as_str().to_string(),
+                model: plan.model.clone(),
+            });
+            result = execute_plan(
+                exec,
+                &provider,
+                plan,
+                &origin_policy,
+                &origin_key,
+                &key_fp,
+                &redactor,
+                cancel,
+                mode,
+                &session_budget,
+                TokenLimitField::MaxCompletionTokens,
+                AuthScheme::QueryKey,
+            )
+            .await;
+            if result.ok {
+                result.suggestion_note =
+                    Some("Header x-goog-api-key 失败后，Query ?key= 认证成功。".into());
+            }
+        }
 
         if plan.protocol == ProtocolKind::OpenAiChat
             && !result.ok
             && !result.reused_from_cache
             && is_max_completion_tokens_unsupported(&result)
         {
+            if result.http_sent {
+                provider_real_sends += 1;
+            }
             tried_token_fallback = true;
             emit(DiagnosisEvent::AttemptStarted {
                 run_id: run_id.to_string(),
@@ -313,6 +395,9 @@ async fn diagnose_one(
             });
             attempts.push(result);
 
+            if provider_real_sends >= provider_budget {
+                break;
+            }
             result = execute_plan(
                 exec,
                 &provider,
@@ -325,6 +410,7 @@ async fn diagnose_one(
                 mode,
                 &session_budget,
                 TokenLimitField::MaxTokens,
+                AuthScheme::XGoogApiKey,
             )
             .await;
             if result.ok {
@@ -338,8 +424,13 @@ async fn diagnose_one(
             }
         }
 
+        if result.http_sent {
+            provider_real_sends += 1;
+        }
+
         if result.classification == "HOST_BUDGET_EXHAUSTED"
             || result.classification == "HOST_RATE_LIMIT_STOPPED"
+            || result.classification == "PROVIDER_BUDGET_EXHAUSTED"
         {
             emit(DiagnosisEvent::AttemptFinished {
                 run_id: run_id.to_string(),
@@ -364,7 +455,9 @@ async fn diagnose_one(
 
         if result.ok {
             any_ok = true;
-            if plan.is_current_config {
+            // Guessed models must not count as CURRENT_CONFIG_OK
+            let counts_as_current = plan.is_current_config && !model_is_guessed;
+            if counts_as_current {
                 current_ok = true;
             }
             if success_plan.is_none() {
@@ -397,7 +490,8 @@ async fn diagnose_one(
         .unwrap_or(false);
     let model_changed = success_plan
         .map(|p| Some(p.model.as_str()) != provider.configured_model.as_deref())
-        .unwrap_or(false);
+        .unwrap_or(false)
+        || (model_is_guessed && any_ok && !current_ok);
 
     let needs_local = if provider.app_type == crate::ccs_adapter::AppType::Codex {
         if let Some(sp) = success_plan {
@@ -429,7 +523,7 @@ async fn diagnose_one(
         }
     };
 
-    let status = if provider.skip_reason.is_some() {
+    let mut status = if provider.skip_reason.is_some() {
         "MANAGED_AUTH_SKIPPED".into()
     } else {
         final_status_from_attempts(
@@ -442,6 +536,16 @@ async fn diagnose_one(
             needs_local,
         )
     };
+    if model_is_guessed && any_ok && !current_ok && status != "LOCAL_ROUTING_REQUIRED" {
+        // Prefer MODEL_GUESS_OK when only a guessed model worked
+        if status == "CURRENT_CONFIG_OK"
+            || status == "MODEL_VARIANT_OK"
+            || status == "AUTH_VARIANT_OK"
+            || (!protocol_changed && !url_changed)
+        {
+            status = "MODEL_GUESS_OK".into();
+        }
+    }
 
     let mut suggestion = build_suggestion(
         &provider,
@@ -451,6 +555,11 @@ async fn diagnose_one(
         needs_local,
         &status,
     );
+    if model_is_guessed && any_ok {
+        suggestion = format!(
+            "{suggestion} 使用 Doctor 推测模型测试成功，但不能证明 CC Switch 当前模型配置可用。"
+        );
+    }
     if let Some(note) = token_fallback_note {
         suggestion = format!("{suggestion} {note}");
     } else if tried_token_fallback && !any_ok {
@@ -475,11 +584,34 @@ async fn diagnose_one(
             if a.reused_from_cache {
                 line.push_str(" [复用缓存]");
             }
+            if a.http_sent {
+                line.push_str(" [真实发送]");
+            }
             if let Some(TokenLimitField::MaxTokens) = a.token_limit_field {
                 line.push_str(" [max_tokens]");
             }
             if let Some(note) = &a.suggestion_note {
                 line.push_str(&format!(" — {note}"));
+            }
+            if !a.error_evidence.is_empty() {
+                let bits: Vec<String> = a
+                    .error_evidence
+                    .iter()
+                    .map(|e| {
+                        let mut s = e.source.clone();
+                        if let Some(c) = &e.code {
+                            s.push_str(&format!(" code={c}"));
+                        }
+                        if let Some(k) = &e.matched_keyword {
+                            s.push_str(&format!(" kw={k}"));
+                        }
+                        if let Some(m) = &e.message {
+                            s.push_str(&format!(" msg={}", m.chars().take(80).collect::<String>()));
+                        }
+                        s
+                    })
+                    .collect();
+                line.push_str(&format!(" | 依据: {}", bits.join("; ")));
             }
             line
         })
@@ -543,8 +675,9 @@ async fn execute_plan(
     mode: DiagnosisMode,
     session_budget: &SessionBudget,
     token_field: TokenLimitField,
+    gemini_auth: AuthScheme,
 ) -> AttemptResult {
-    let safe_url = crate::security::sanitize_url_for_display(&plan.base_url);
+    let safe_url = crate::security::redact::sanitize_url_with_redactor(&plan.base_url, redactor);
 
     if cancel.is_cancelled() {
         return AttemptResult {
@@ -589,7 +722,7 @@ async fn execute_plan(
                 provider.preferred_auth.unwrap_or(AuthScheme::XApiKey)
             }
         }
-        ProtocolKind::GeminiNative => AuthScheme::XGoogApiKey,
+        ProtocolKind::GeminiNative => gemini_auth,
         ProtocolKind::Unknown => AuthScheme::Bearer,
     };
 
@@ -620,13 +753,14 @@ async fn execute_plan(
             matches!(auth_scheme, AuthScheme::Bearer),
             ua,
         ),
-        ProtocolKind::GeminiNative => build_gemini_request(
+        ProtocolKind::GeminiNative => build_gemini_request_with_auth(
             &plan.base_url,
             &plan.model,
             key,
             plan.stream,
             plan.tool_call,
             ua,
+            auth_scheme,
         ),
         ProtocolKind::Unknown => {
             return AttemptResult {
