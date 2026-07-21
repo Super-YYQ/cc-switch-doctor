@@ -1,17 +1,15 @@
-use super::anthropic::{
-    extract_anthropic_stream_delta, extract_anthropic_text, extract_anthropic_tool_use,
-};
+use super::anthropic::{extract_anthropic_stream_delta, extract_anthropic_tool_use};
 use super::gemini::{extract_gemini_text, extract_gemini_tool_call};
-use super::openai_chat::{extract_chat_stream_delta, extract_chat_text, extract_chat_tool_call};
-use super::openai_responses::{
-    extract_responses_stream_event, extract_responses_text, extract_responses_tool_call,
-};
+use super::openai_chat::{extract_chat_stream_delta, extract_chat_tool_call};
+use super::openai_responses::{extract_responses_stream_event, extract_responses_tool_call};
 use super::types::{
     evaluate_text, redact_result, AttemptResult, BuiltRequest, RequestPurpose, MAX_BODY_BYTES,
     MAX_ERROR_BYTES,
 };
 use crate::ccs_adapter::ProtocolKind;
-use crate::diagnostics::classifier::{classify_http_failure, classify_with_evidence};
+use crate::diagnostics::classifier::{
+    classify_http_failure, classify_structured_error_envelope, classify_with_evidence,
+};
 use crate::security::origin::SameOriginPolicy;
 use crate::security::redact::{sanitize_url_for_display, truncate_utf8, SecretRedactor};
 use futures_util::StreamExt;
@@ -246,9 +244,99 @@ impl HttpExecutor {
                 .await;
         }
 
+        // Capture headers before consuming body
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let content_length = response
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<usize>().ok());
+
+        if let Some(cl) = content_length {
+            if cl > MAX_BODY_BYTES {
+                return AttemptResult {
+                    ok: false,
+                    partial: false,
+                    status_code: Some(status.as_u16()),
+                    latency_ms: started.elapsed().as_millis() as u64,
+                    ttft_ms: None,
+                    protocol: req.protocol,
+                    model: req.model.clone(),
+                    url: safe_url,
+                    stream: false,
+                    purpose: req.purpose,
+                    extracted_text: None,
+                    tool_call_ok: None,
+                    error_kind: Some("body".into()),
+                    error_message: Some("响应体 Content-Length 超过 2MB 限制".into()),
+                    response_excerpt: None,
+                    classification: "UNKNOWN_ERROR".into(),
+                    http_sent: true,
+                    reused_from_cache: false,
+                    suggestion_note: None,
+                    token_limit_field: None,
+                    error_evidence: vec![],
+                };
+            }
+        }
+
         let status_code = status.as_u16();
-        let bytes = match response.bytes().await {
-            Ok(b) => b,
+        let bytes = match read_body_bounded(response, MAX_BODY_BYTES, cancel).await {
+            Ok(BodyRead::Bytes(b)) => b,
+            Ok(BodyRead::TooLarge) => {
+                return AttemptResult {
+                    ok: false,
+                    partial: false,
+                    status_code: Some(status_code),
+                    latency_ms: started.elapsed().as_millis() as u64,
+                    ttft_ms: None,
+                    protocol: req.protocol,
+                    model: req.model.clone(),
+                    url: safe_url,
+                    stream: false,
+                    purpose: req.purpose,
+                    extracted_text: None,
+                    tool_call_ok: None,
+                    error_kind: Some("body".into()),
+                    error_message: Some("响应体超过 2MB 限制（增量读取已中止）".into()),
+                    response_excerpt: None,
+                    classification: "UNKNOWN_ERROR".into(),
+                    http_sent: true,
+                    reused_from_cache: false,
+                    suggestion_note: None,
+                    token_limit_field: None,
+                    error_evidence: vec![],
+                };
+            }
+            Ok(BodyRead::Cancelled) => {
+                return AttemptResult {
+                    ok: false,
+                    partial: false,
+                    status_code: Some(status_code),
+                    latency_ms: started.elapsed().as_millis() as u64,
+                    ttft_ms: None,
+                    protocol: req.protocol,
+                    model: req.model.clone(),
+                    url: safe_url,
+                    stream: false,
+                    purpose: req.purpose,
+                    extracted_text: None,
+                    tool_call_ok: None,
+                    error_kind: Some("cancelled".into()),
+                    error_message: Some("已取消".into()),
+                    response_excerpt: None,
+                    classification: "CANCELLED".into(),
+                    http_sent: true,
+                    reused_from_cache: false,
+                    suggestion_note: None,
+                    token_limit_field: None,
+                    error_evidence: vec![],
+                };
+            }
             Err(e) => {
                 return AttemptResult {
                     ok: false,
@@ -264,7 +352,7 @@ impl HttpExecutor {
                     extracted_text: None,
                     tool_call_ok: None,
                     error_kind: Some("network".into()),
-                    error_message: Some(redactor.redact(&e.to_string())),
+                    error_message: Some(redactor.redact(&e)),
                     response_excerpt: None,
                     classification: "NETWORK_UNREACHABLE".into(),
                     http_sent: true,
@@ -276,38 +364,13 @@ impl HttpExecutor {
             }
         };
 
-        if bytes.len() > MAX_BODY_BYTES {
-            return AttemptResult {
-                ok: false,
-                partial: false,
-                status_code: Some(status_code),
-                latency_ms: started.elapsed().as_millis() as u64,
-                ttft_ms: None,
-                protocol: req.protocol,
-                model: req.model.clone(),
-                url: safe_url,
-                stream: false,
-                purpose: req.purpose,
-                extracted_text: None,
-                tool_call_ok: None,
-                error_kind: Some("body".into()),
-                error_message: Some("响应体超过 2MB 限制".into()),
-                response_excerpt: None,
-                classification: "UNKNOWN_ERROR".into(),
-                http_sent: true,
-                reused_from_cache: false,
-                suggestion_note: None,
-                token_limit_field: None,
-                error_evidence: vec![],
-            };
-        }
-
         let body_text = String::from_utf8_lossy(&bytes).to_string();
         let latency_ms = started.elapsed().as_millis() as u64;
+        let ct_ref = content_type.as_deref();
 
         if !status.is_success() {
             let excerpt = truncate(&redactor.redact(&body_text), MAX_ERROR_BYTES);
-            let classification = classify_http_failure(status_code, &body_text);
+            let (classification, ev) = classify_with_evidence(status_code, &body_text, ct_ref);
             return AttemptResult {
                 ok: false,
                 partial: false,
@@ -329,43 +392,53 @@ impl HttpExecutor {
                 reused_from_cache: false,
                 suggestion_note: None,
                 token_limit_field: None,
-                error_evidence: vec![],
+                error_evidence: ev,
             };
+        }
+
+        // HTML on 2xx → WAF before JSON parse
+        if let Some(ct) = ct_ref {
+            if ct.to_ascii_lowercase().contains("text/html") {
+                let (cls, ev) = classify_with_evidence(status_code, &body_text, ct_ref);
+                return AttemptResult {
+                    ok: false,
+                    partial: false,
+                    status_code: Some(status_code),
+                    latency_ms,
+                    ttft_ms: None,
+                    protocol: req.protocol,
+                    model: req.model.clone(),
+                    url: safe_url,
+                    stream: false,
+                    purpose: req.purpose,
+                    extracted_text: None,
+                    tool_call_ok: None,
+                    error_kind: Some("waf".into()),
+                    error_message: Some("响应 Content-Type 为 HTML，疑似网关/WAF".into()),
+                    response_excerpt: Some(truncate(&redactor.redact(&body_text), 512)),
+                    classification: if cls == "UNKNOWN_ERROR" {
+                        "GATEWAY_OR_WAF".into()
+                    } else {
+                        cls
+                    },
+                    http_sent: true,
+                    reused_from_cache: false,
+                    suggestion_note: None,
+                    token_limit_field: None,
+                    error_evidence: ev,
+                };
+            }
         }
 
         let parsed: serde_json::Value =
             serde_json::from_str(&body_text).unwrap_or(serde_json::Value::Null);
-        if parsed.get("error").is_some() {
-            let excerpt = truncate(&redactor.redact(&body_text), 512);
-            let classification = classify_http_failure(status_code, &body_text);
-            return AttemptResult {
-                ok: false,
-                partial: false,
-                status_code: Some(status_code),
-                latency_ms,
-                ttft_ms: None,
-                protocol: req.protocol,
-                model: req.model.clone(),
-                url: safe_url,
-                stream: false,
-                purpose: req.purpose,
-                extracted_text: None,
-                tool_call_ok: None,
-                error_kind: Some("nested_error".into()),
-                error_message: Some(excerpt.clone()),
-                response_excerpt: Some(excerpt),
-                classification,
-                http_sent: true,
-                reused_from_cache: false,
-                suggestion_note: None,
-                token_limit_field: None,
-                error_evidence: vec![],
-            };
-        }
 
-        // Non-standard business errors on 2xx (code/msg without top-level error)
+        // Only structured error envelopes may short-circuit before success parsing.
+        // Free-text keyword heuristics must NEVER override a valid protocol success body
+        // (e.g. billing_usage in Anthropic success JSON must not become QUOTA_EXHAUSTED).
+        if let Some((cls, ev)) =
+            classify_structured_error_envelope(status_code, &body_text, &parsed)
         {
-            let (cls, ev) = classify_with_evidence(status_code, &body_text, None);
             if matches!(
                 cls.as_str(),
                 "AUTH_INVALID"
@@ -374,6 +447,7 @@ impl HttpExecutor {
                     | "RATE_LIMITED"
                     | "GATEWAY_OR_WAF"
                     | "MODEL_NOT_FOUND"
+                    | "UNKNOWN_ERROR"
             ) {
                 let excerpt = truncate(&redactor.redact(&body_text), 512);
                 return AttemptResult {
@@ -389,7 +463,7 @@ impl HttpExecutor {
                     purpose: req.purpose,
                     extracted_text: None,
                     tool_call_ok: None,
-                    error_kind: Some("business_error".into()),
+                    error_kind: Some("structured_error".into()),
                     error_message: Some(excerpt.clone()),
                     response_excerpt: Some(excerpt),
                     classification: cls,
@@ -410,6 +484,12 @@ impl HttpExecutor {
                 ProtocolKind::GeminiNative => extract_gemini_tool_call(&parsed),
                 ProtocolKind::Unknown => None,
             };
+            let tool = tool.or_else(|| {
+                extract_chat_tool_call(&parsed)
+                    .or_else(|| extract_responses_tool_call(&parsed))
+                    .or_else(|| extract_anthropic_tool_use(&parsed))
+                    .or_else(|| extract_gemini_tool_call(&parsed))
+            });
             let tool_ok = tool
                 .as_ref()
                 .map(|(name, args)| name == "ccs_doctor_echo" && args.contains("ok"))
@@ -447,17 +527,32 @@ impl HttpExecutor {
             };
         }
 
-        let text = match req.protocol {
-            ProtocolKind::OpenAiChat => extract_chat_text(&parsed),
-            ProtocolKind::OpenAiResponses => extract_responses_text(&parsed),
-            ProtocolKind::AnthropicMessages => extract_anthropic_text(&parsed),
-            ProtocolKind::GeminiNative => extract_gemini_text(&parsed),
-            ProtocolKind::Unknown => None,
-        };
-
-        match text {
-            Some(t) => {
+        match super::parse::extract_response_text(req.protocol, &parsed) {
+            Some(parsed_text) => {
+                let t = parsed_text.text;
                 let (ok, partial) = evaluate_text(&t);
+                let classification = if ok {
+                    if parsed_text.cross_protocol {
+                        "RESPONSE_PROTOCOL_VARIANT_OK".into()
+                    } else {
+                        "GENERATE_OK".into()
+                    }
+                } else if partial {
+                    "PARTIAL_TEXT".into()
+                } else {
+                    "UNKNOWN_ERROR".into()
+                };
+                let suggestion_note = if parsed_text.cross_protocol {
+                    Some(format!(
+                        "目标协议：{}；实际返回结构：{}",
+                        super::parse::protocol_label(req.protocol),
+                        super::parse::protocol_label(parsed_text.matched_protocol)
+                    ))
+                } else if parsed_text.loose_field {
+                    Some("从兼容字段提取到文本".into())
+                } else {
+                    None
+                };
                 AttemptResult {
                     ok,
                     partial,
@@ -484,50 +579,44 @@ impl HttpExecutor {
                         Some("响应结构成功但无文本".into())
                     },
                     response_excerpt: None,
-                    classification: if ok {
-                        "GENERATE_OK".into()
-                    } else if partial {
-                        "PARTIAL_TEXT".into()
+                    classification,
+                    http_sent: true,
+                    reused_from_cache: false,
+                    suggestion_note,
+                    token_limit_field: None,
+                    error_evidence: vec![],
+                }
+            }
+            None => {
+                let (cls, ev) = classify_with_evidence(status_code, &body_text, ct_ref);
+                AttemptResult {
+                    ok: false,
+                    partial: false,
+                    status_code: Some(status_code),
+                    latency_ms,
+                    ttft_ms: None,
+                    protocol: req.protocol,
+                    model: req.model.clone(),
+                    url: safe_url,
+                    stream: false,
+                    purpose: req.purpose,
+                    extracted_text: None,
+                    tool_call_ok: None,
+                    error_kind: Some("parse".into()),
+                    error_message: Some("HTTP 成功但无法按协议解析文本".into()),
+                    response_excerpt: Some(truncate(&redactor.redact(&body_text), 512)),
+                    classification: if cls != "UNKNOWN_ERROR" {
+                        cls
                     } else {
-                        "UNKNOWN_ERROR".into()
+                        "RESPONSE_FORMAT_MISMATCH".into()
                     },
                     http_sent: true,
                     reused_from_cache: false,
                     suggestion_note: None,
                     token_limit_field: None,
-                    error_evidence: vec![],
+                    error_evidence: ev,
                 }
             }
-            None => AttemptResult {
-                ok: false,
-                partial: false,
-                status_code: Some(status_code),
-                latency_ms,
-                ttft_ms: None,
-                protocol: req.protocol,
-                model: req.model.clone(),
-                url: safe_url,
-                stream: false,
-                purpose: req.purpose,
-                extracted_text: None,
-                tool_call_ok: None,
-                error_kind: Some("parse".into()),
-                error_message: Some("HTTP 成功但无法按协议解析文本".into()),
-                response_excerpt: Some(truncate(&redactor.redact(&body_text), 512)),
-                classification: {
-                    let (cls, _) = classify_with_evidence(status_code, &body_text, None);
-                    if cls != "UNKNOWN_ERROR" {
-                        cls
-                    } else {
-                        "RESPONSE_FORMAT_MISMATCH".into()
-                    }
-                },
-                http_sent: true,
-                reused_from_cache: false,
-                suggestion_note: None,
-                token_limit_field: None,
-                error_evidence: vec![],
-            },
         }
     }
 
@@ -691,6 +780,91 @@ impl HttpExecutor {
 
         let latency_ms = started.elapsed().as_millis() as u64;
         if text.is_empty() {
+            // Fallback: upstream ignored stream=true and returned a full JSON body
+            let full = buf.trim();
+            if !full.is_empty() {
+                // Try NDJSON: each non-empty line is a JSON object
+                let mut ndjson_text = String::new();
+                for line in full.lines() {
+                    let line = line.trim();
+                    if line.is_empty() || line == "[DONE]" {
+                        continue;
+                    }
+                    let data = line.strip_prefix("data:").map(|s| s.trim()).unwrap_or(line);
+                    if data == "[DONE]" {
+                        continue;
+                    }
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+                        if let Some(p) = super::parse::extract_response_text(req.protocol, &v) {
+                            ndjson_text.push_str(&p.text);
+                        } else {
+                            // stream delta extractors
+                            let delta = match req.protocol {
+                                ProtocolKind::OpenAiChat => extract_chat_stream_delta(data),
+                                ProtocolKind::OpenAiResponses => {
+                                    extract_responses_stream_event(data)
+                                }
+                                ProtocolKind::AnthropicMessages => {
+                                    extract_anthropic_stream_delta(data)
+                                }
+                                ProtocolKind::GeminiNative => extract_gemini_text(&v),
+                                ProtocolKind::Unknown => None,
+                            };
+                            if let Some(d) = delta {
+                                ndjson_text.push_str(&d);
+                            }
+                        }
+                    }
+                }
+                if ndjson_text.is_empty() {
+                    // Single full JSON body
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(full) {
+                        if let Some(p) = super::parse::extract_response_text(req.protocol, &v) {
+                            ndjson_text = p.text;
+                        }
+                    }
+                }
+                if !ndjson_text.is_empty() {
+                    let (ok, partial) = evaluate_text(&ndjson_text);
+                    return AttemptResult {
+                        ok,
+                        partial,
+                        status_code: Some(status_code),
+                        latency_ms,
+                        ttft_ms: ttft,
+                        protocol: req.protocol,
+                        model: req.model.clone(),
+                        url: safe_url,
+                        stream: true,
+                        purpose: req.purpose,
+                        extracted_text: Some(redactor.redact(&ndjson_text)),
+                        tool_call_ok: None,
+                        error_kind: None,
+                        error_message: if ok {
+                            None
+                        } else if partial {
+                            Some("流式/完整 JSON 返回有效文本但缺少 CCS_DOCTOR_OK".into())
+                        } else {
+                            None
+                        },
+                        response_excerpt: None,
+                        classification: if ok {
+                            "STREAM_OK".into()
+                        } else if partial {
+                            "PARTIAL_TEXT".into()
+                        } else {
+                            "STREAMING_UNSUPPORTED".into()
+                        },
+                        http_sent: true,
+                        reused_from_cache: false,
+                        suggestion_note: Some(
+                            "stream=true 未解析到 SSE 增量，已回退完整 JSON/NDJSON 解析".into(),
+                        ),
+                        token_limit_field: None,
+                        error_evidence: vec![],
+                    };
+                }
+            }
             return AttemptResult {
                 ok: false,
                 partial: false,
@@ -706,7 +880,7 @@ impl HttpExecutor {
                 tool_call_ok: None,
                 error_kind: Some("stream".into()),
                 error_message: Some("流式响应未解析到文本增量".into()),
-                response_excerpt: None,
+                response_excerpt: Some(truncate(&redactor.redact(&buf), 512)),
                 classification: "STREAMING_UNSUPPORTED".into(),
                 http_sent: true,
                 reused_from_cache: false,
@@ -758,8 +932,85 @@ fn truncate(s: &str, max: usize) -> String {
     truncate_utf8(s, max)
 }
 
+enum BodyRead {
+    Bytes(bytes::Bytes),
+    TooLarge,
+    Cancelled,
+}
+
+async fn read_body_bounded(
+    response: reqwest::Response,
+    max_bytes: usize,
+    cancel: &CancellationToken,
+) -> Result<BodyRead, String> {
+    let mut stream = response.bytes_stream();
+    let mut acc: Vec<u8> = Vec::new();
+    loop {
+        if cancel.is_cancelled() {
+            return Ok(BodyRead::Cancelled);
+        }
+        let next = tokio::select! {
+            _ = cancel.cancelled() => return Ok(BodyRead::Cancelled),
+            item = stream.next() => item,
+        };
+        let Some(item) = next else { break };
+        let chunk = item.map_err(|e| e.to_string())?;
+        if acc.len().saturating_add(chunk.len()) > max_bytes {
+            return Ok(BodyRead::TooLarge);
+        }
+        acc.extend_from_slice(&chunk);
+    }
+    Ok(BodyRead::Bytes(bytes::Bytes::from(acc)))
+}
+
 // silence unused import warning for StatusCode in some builds
 #[allow(dead_code)]
 fn _status_code_use(s: StatusCode) -> u16 {
     s.as_u16()
+}
+
+#[cfg(test)]
+mod parse_integration_tests {
+    use crate::ccs_adapter::ProtocolKind;
+    use crate::protocols::parse::extract_response_text;
+    use crate::protocols::types::{evaluate_text, SUCCESS_MARKER};
+    use serde_json::json;
+
+    #[test]
+    fn anthropic_success_with_billing_usage_is_not_quota_error() {
+        let body = json!({
+            "id": "f9bbb78d-17ae-94fb-8230-b4c6ad4c0f4f",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "CCS_DOCTOR_OK"}],
+            "stop_reason": "end_turn",
+            "model": "grok-4.5-build-free",
+            "usage": {
+                "input_tokens": 206,
+                "output_tokens": 6,
+                "billing_usage": {"source": "oai_chat", "semantic": "openai"}
+            }
+        });
+        let parsed = extract_response_text(ProtocolKind::AnthropicMessages, &body).unwrap();
+        assert_eq!(parsed.text, SUCCESS_MARKER);
+        let (ok, partial) = evaluate_text(&parsed.text);
+        assert!(ok);
+        assert!(!partial);
+        // classifier must not call this a quota hit
+        let raw = body.to_string();
+        let (cls, _) = crate::diagnostics::classifier::classify_with_evidence(
+            200,
+            &raw,
+            Some("application/json"),
+        );
+        assert_ne!(cls, "QUOTA_EXHAUSTED");
+    }
+
+    #[test]
+    fn cross_protocol_openai_on_anthropic_target() {
+        let body = json!({"choices":[{"message":{"content":"CCS_DOCTOR_OK"}}]});
+        let p = extract_response_text(ProtocolKind::AnthropicMessages, &body).unwrap();
+        assert!(p.cross_protocol);
+        assert_eq!(p.text, "CCS_DOCTOR_OK");
+    }
 }
