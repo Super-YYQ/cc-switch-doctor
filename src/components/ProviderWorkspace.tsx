@@ -32,6 +32,7 @@ interface Props {
   onActivate: (id: string) => void;
   onSelectFiltered: () => void;
   onClearSelection: () => void;
+  onSelectCurrent?: () => void;
 }
 
 export function ProviderWorkspace({
@@ -52,6 +53,7 @@ export function ProviderWorkspace({
   onActivate,
   onSelectFiltered,
   onClearSelection,
+  onSelectCurrent,
 }: Props) {
   const presentApps = new Set(providers.map((p) => p.appType));
   const filters = ALL_FILTERS.filter((f) => f.id === "all" || presentApps.has(f.id as never));
@@ -148,6 +150,16 @@ export function ProviderWorkspace({
             >
               取消全选
             </button>
+            {onSelectCurrent && (
+              <button
+                className="btn btn-sm"
+                type="button"
+                disabled={running}
+                onClick={onSelectCurrent}
+              >
+                选择 CCS 当前配置
+              </button>
+            )}
             <button className="btn btn-sm" type="button" onClick={() => onQuery("")}>
               清除搜索
             </button>

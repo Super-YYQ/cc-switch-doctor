@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   cancelDiagnosis,
   checkUpdates,
@@ -11,7 +11,7 @@ import {
   selectDatabase,
   startDiagnosis,
 } from "@/lib/api";
-import { estimateClientSide, filterProviders } from "@/lib/utils";
+import { defaultSelectedIds, estimateClientSide, filterProviders } from "@/lib/utils";
 import type {
   AppInfo,
   DiagnosisEvent,
@@ -106,6 +106,9 @@ export default function App() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [activeId, setActiveId] = useState<string | null>(null);
   const [mode, setMode] = useState<DiagnosisMode>("smart");
+  const [concurrency, setConcurrency] = useState(1);
+  const [stopping, setStopping] = useState(false);
+  const activeRunIdRef = useRef<string | null>(null);
   const [running, setRunning] = useState(false);
   const [runId, setRunId] = useState<string | null>(null);
   const [liveLog, setLiveLog] = useState<string[]>([]);
@@ -123,7 +126,7 @@ export default function App() {
   /** Replace scan data and wipe all session/result state bound to the previous DB view. */
   const applyFreshScan = useCallback((view: ProviderScanView) => {
     setScan(view);
-    setSelected(new Set());
+    setSelected(defaultSelectedIds(view.providers));
     setActiveId(null);
     setSummaries([]);
     setLiveLog([]);
@@ -132,7 +135,9 @@ export default function App() {
     setSentRequests(0);
     setCurrentName(null);
     setRunId(null);
+    activeRunIdRef.current = null;
     setRunning(false);
+    setStopping(false);
     setError(null);
   }, []);
 
@@ -141,7 +146,7 @@ export default function App() {
     try {
       if (!isTauri()) {
         applyFreshScan(DEMO_SCAN);
-        setAppInfo({ name: "CC Switch Doctor", version: "0.1.2", doctorVersion: "0.1.2" });
+        setAppInfo({ name: "CC Switch Doctor", version: "0.1.3", doctorVersion: "0.1.3" });
         if (!hideSafetySession) setSafetyOpen(true);
         return;
       }
@@ -187,12 +192,13 @@ export default function App() {
       setEstimated(estimateClientSide(count, mode));
       return;
     }
-    void estimateDiagnosis({ opaqueIds: [...selected], mode, concurrency: 1 })
+    void estimateDiagnosis({ opaqueIds: [...selected], mode, concurrency })
       .then((r) => setEstimated(r.estimatedAttempts))
       .catch(() => setEstimated(estimateClientSide(count, mode)));
-  }, [selected, mode, providers]);
+  }, [selected, mode, concurrency, providers]);
 
   function handleEvent(ev: DiagnosisEvent) {
+    if ("runId" in ev && activeRunIdRef.current && ev.runId !== activeRunIdRef.current) return;
     if (ev.type === "run_started") {
       setSentRequests(0);
       setCompletedCount(0);
@@ -232,12 +238,15 @@ export default function App() {
     } else if (ev.type === "run_finished") {
       setSummaries(ev.summaries);
       setRunning(false);
+      setStopping(false);
       setRunId(null);
+      activeRunIdRef.current = null;
       setCurrentName(null);
       setRunningIds(new Set());
       setLiveLog((l) => [`完成：${ev.summaries.length} 个结果`, ...l]);
     } else if (ev.type === "run_cancelled") {
       setRunning(false);
+      setStopping(false);
       setCurrentName(null);
       setRunningIds(new Set());
       setLiveLog((l) => ["已取消", ...l]);
@@ -337,9 +346,11 @@ export default function App() {
       const { runId: id } = await startDiagnosis({
         opaqueIds: ids,
         mode,
-        concurrency: 1,
+        concurrency,
       });
+      activeRunIdRef.current = id;
       setRunId(id);
+      setStopping(false);
     } catch (e) {
       setRunning(false);
       setError(String(e));
@@ -348,13 +359,13 @@ export default function App() {
 
   async function onCancel() {
     if (runId) {
+      setStopping(true);
       try {
         await cancelDiagnosis(runId);
       } catch {
-        /* ignore */
+        setStopping(false);
       }
     }
-    setRunning(false);
   }
 
   async function onPickDb() {
@@ -393,7 +404,7 @@ export default function App() {
     try {
       if (!isTauri()) {
         setUpdates({
-          doctorVersion: "0.1.2",
+          doctorVersion: "0.1.3",
           doctorUpdateAvailable: false,
           verifiedCcSwitch: "3.17.0",
           message: "开发预览：更新检查需在应用内执行",
@@ -441,6 +452,7 @@ export default function App() {
 
       <SessionControlBar
         mode={mode}
+        concurrency={concurrency}
         selectedCount={selectedCount}
         estimated={estimated}
         running={running}
@@ -449,7 +461,9 @@ export default function App() {
         sentRequests={sentRequests}
         currentName={currentName}
         disabledStart={running || selectedCount === 0 || !scan?.canTest}
+        stopping={stopping}
         onMode={setMode}
+        onConcurrency={setConcurrency}
         onStart={() => void onStart()}
         onCancel={() => void onCancel()}
       />
@@ -489,6 +503,7 @@ export default function App() {
           onActivate={setActiveId}
           onSelectFiltered={selectFiltered}
           onClearSelection={() => setSelected(new Set())}
+          onSelectCurrent={() => setSelected(defaultSelectedIds(providers))}
         />
         <DiagnosisWorkspace
           summaries={

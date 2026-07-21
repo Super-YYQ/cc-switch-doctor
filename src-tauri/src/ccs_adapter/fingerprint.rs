@@ -146,7 +146,9 @@ fn classify(
         );
     }
 
-    if providers_ok && endpoints_ok && (12..=20).contains(&user_version) {
+    if providers_ok && endpoints_ok && false
+    /* v0.1.3: no wide user_version range */
+    {
         return (
             CompatibilityStatus::Compatible,
             format!(
@@ -157,8 +159,8 @@ fn classify(
 
     if providers_ok && !endpoints_ok {
         return (
-            CompatibilityStatus::Compatible,
-            "providers 可解析；provider_endpoints 缺失或字段变化，将跳过额外端点候选。".into(),
+            CompatibilityStatus::Unknown,
+            "providers 可解析但 provider_endpoints 缺失或未验证；已停止敏感字段读取与测试。".into(),
         );
     }
 

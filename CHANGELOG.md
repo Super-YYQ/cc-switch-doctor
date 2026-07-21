@@ -1,3 +1,23 @@
+## [0.1.3] — 2026-07-21
+
+### Fixed
+
+- Request cache key now includes final URL, method, auth scheme, UA/body fingerprints (no cross-variant reuse)
+- Concurrent identical requests single-flight reuse
+- CC Switch / discovery with / UNC expansion
+- Run cancel by matching runId; complete_run isolation; frontend ignores late events
+- Schema gate no longer treats wide user_version ranges as Compatible
+- Anthropic AUTH_TOKEN uses Bearer; API_KEY uses x-api-key for current-config tests
+- UTF-8 safe truncation; URL display masks all query values and path secrets
+- Error classification priority (auth/quota/WAF before UNSUPPORTED_PROTOCOL)
+- Gemini path de-duplication
+
+### Changed
+
+- Concurrency selectable 1/2/3 (default 1); mode tooltips and short descriptions
+- Default-select CC Switch current providers after scan
+- Chinese status badges; possible-causes for low-confidence protocol issues
+
 ## [0.1.2] — 2026-07-21
 
 ### Fixed

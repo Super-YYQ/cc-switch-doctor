@@ -113,6 +113,8 @@ pub fn normalize_provider(raw: RawProviderRow) -> NormalizedProvider {
 
     let masked_key = mask_api_key(&api_key);
     let safe_base_url = sanitize_url_for_display(&base_url);
+    let (preferred_auth, credential_source) =
+        resolve_preferred_auth(app_type, &settings, auth_kind);
 
     NormalizedProvider {
         opaque_id: Uuid::new_v4().to_string(),
@@ -136,7 +138,64 @@ pub fn normalize_provider(raw: RawProviderRow) -> NormalizedProvider {
         safe_base_url,
         website_url: raw.website_url,
         api_format_hint,
+        preferred_auth,
+        credential_source,
     }
+}
+
+fn resolve_preferred_auth(
+    app_type: AppType,
+    settings: &Value,
+    auth_kind: AuthKind,
+) -> (Option<crate::protocols::types::AuthScheme>, Option<String>) {
+    use crate::protocols::types::AuthScheme;
+    let env = settings.get("env");
+    match app_type {
+        AppType::Claude | AppType::ClaudeDesktop => {
+            if let Some(src) = first_present_key(
+                env,
+                &[
+                    "ANTHROPIC_AUTH_TOKEN",
+                    "ANTHROPIC_API_KEY",
+                    "OPENROUTER_API_KEY",
+                    "GOOGLE_API_KEY",
+                ],
+            ) {
+                let scheme = match src.as_str() {
+                    "ANTHROPIC_AUTH_TOKEN" | "OPENROUTER_API_KEY" => AuthScheme::Bearer,
+                    "ANTHROPIC_API_KEY" => AuthScheme::XApiKey,
+                    "GOOGLE_API_KEY" => AuthScheme::XGoogApiKey,
+                    _ => AuthScheme::XApiKey,
+                };
+                return (Some(scheme), Some(src));
+            }
+            (Some(AuthScheme::XApiKey), None)
+        }
+        AppType::Codex => (Some(AuthScheme::Bearer), Some("OPENAI_API_KEY".into())),
+        AppType::Gemini => (Some(AuthScheme::XGoogApiKey), Some("GEMINI_API_KEY".into())),
+        _ => {
+            let scheme = match auth_kind {
+                AuthKind::BearerToken => AuthScheme::Bearer,
+                AuthKind::AnthropicKey => AuthScheme::XApiKey,
+                AuthKind::GeminiKey => AuthScheme::XGoogApiKey,
+                AuthKind::ApiKey | AuthKind::AzureApiKey => AuthScheme::Bearer,
+                _ => AuthScheme::Bearer,
+            };
+            (Some(scheme), None)
+        }
+    }
+}
+
+fn first_present_key(env: Option<&Value>, keys: &[&str]) -> Option<String> {
+    let env = env?;
+    for k in keys {
+        if let Some(s) = env.get(*k).and_then(|v| v.as_str()) {
+            if !s.trim().is_empty() {
+                return Some((*k).to_string());
+            }
+        }
+    }
+    None
 }
 
 fn extract_credentials(

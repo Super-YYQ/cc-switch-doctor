@@ -1,6 +1,6 @@
 import { Copy, CheckCircle2 } from "lucide-react";
 import type { ProviderDiagnosisSummary } from "@/types";
-import { confidenceLabel, hostFromUrl, statusBadge } from "@/lib/utils";
+import { confidenceLabel, hostFromUrl, possibleCauses, statusBadge } from "@/lib/utils";
 import { useState } from "react";
 
 interface Props {
@@ -53,6 +53,23 @@ export function ResultCard({ summary: s, onCopy }: Props) {
 
       <div className="badge info" style={{ marginBottom: 10 }}>
         <CheckCircle2 size={12} /> {evidenceTag}
+      </div>
+
+      {possibleCauses(s.status) && (
+        <div style={{ marginBottom: 10, fontSize: 13 }}>
+          <div className="section-title" style={{ marginBottom: 4 }}>
+            可能原因
+          </div>
+          <ul className="secondary" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.5 }}>
+            {possibleCauses(s.status)!.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="muted mono" style={{ fontSize: 11, marginBottom: 8 }}>
+        技术状态：{s.status}
       </div>
 
       <div

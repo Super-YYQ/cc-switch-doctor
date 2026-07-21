@@ -39,10 +39,9 @@ jobs:
       - name: Install Rust stable (MSVC)
         shell: pwsh
         run: |
-          # Windows product builds require the MSVC toolchain (not gnu/mingw).
-          Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
-          .\rustup-init.exe -y --default-toolchain stable-x86_64-pc-windows-msvc --profile minimal -c rustfmt,clippy
-          echo "$env:USERPROFILE\.cargo\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal --component rustfmt --component clippy
+          rustup default stable-x86_64-pc-windows-msvc
+          echo "$env:USERPROFILE\.cargoin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
         with:
           workspaces: src-tauri

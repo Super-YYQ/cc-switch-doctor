@@ -58,6 +58,21 @@ export function SafetyDrawer({ open, onClose, hideThisSession, onHideThisSession
         </section>
 
         <section style={{ marginTop: 16 }}>
+          <div className="section-title">诊断模式说明</div>
+          <ul className="secondary" style={{ paddingLeft: 18, lineHeight: 1.6, fontSize: 13 }}>
+            <li>
+              <strong>快速验证</strong>：只测当前配置，最快、Token 最低。
+            </li>
+            <li>
+              <strong>智能诊断</strong>：失败后尝试同 Host 变体（约 ≤12 次/配置）。
+            </li>
+            <li>
+              <strong>深度兼容</strong>：额外 Streaming/Tool/稳定性（约 ≤16 次/配置）。
+            </li>
+            <li>并发 1–3；同一 Host 每次会话最多 30 次真实请求。</li>
+          </ul>
+        </section>
+        <section style={{ marginTop: 16 }}>
           <div className="section-title">证据边界</div>
           <p className="secondary" style={{ fontSize: 13, lineHeight: 1.55 }}>
             本工具验证的是<strong>上游 HTTP API</strong>是否可用。它不能证明 Codex/Claude CLI

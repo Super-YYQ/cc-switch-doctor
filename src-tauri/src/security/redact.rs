@@ -1,6 +1,5 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
 
 static BEARER_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)(bearer\s+)[a-z0-9._\-]{8,}").expect("re"));
@@ -9,11 +8,13 @@ static JWT_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\beyJ[a-zA-Z0-9_\-]+=*\.[a-zA-Z0-9_\-]+=*\.[a-zA-Z0-9_\-+/=]*\b").expect("re")
 });
 static QUERY_SECRET_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)([?&](key|api_key|apikey|token|access_token|auth|password|secret)=)([^&]+)")
-        .expect("re")
+    Regex::new(
+        r"(?i)([?&](key|api[_-]?key|x-api-key|x-goog-api-key|token|access_token|auth|password|secret|signature)=)([^&]*)",
+    )
+    .expect("re")
 });
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone)]
 pub struct SecretRedactor {
     known: Vec<String>,
 }
@@ -69,35 +70,38 @@ pub fn mask_api_key(key: &str) -> String {
     format!("{prefix}…{suffix}")
 }
 
+/// UTF-8 safe truncation on a char boundary, with ellipsis when shortened.
+pub fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_owned();
+    }
+    if max_bytes == 0 {
+        return String::new();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &value[..end])
+}
+
+/// Conservative URL sanitization for any frontend/log display:
+/// - strip userinfo + fragment
+/// - mask ALL query values (keep keys)
+/// - replace known full keys in path via redactor when provided later
 pub fn sanitize_url_for_display(raw: &str) -> String {
     let Ok(mut u) = url::Url::parse(raw) else {
         return SecretRedactor::new().redact(raw);
     };
     let _ = u.set_username("");
     let _ = u.set_password(None);
-    // Redact sensitive query params
     let pairs: Vec<(String, String)> = u
         .query_pairs()
-        .map(|(k, v)| {
-            let kl = k.to_ascii_lowercase();
-            if matches!(
-                kl.as_str(),
-                "key"
-                    | "api_key"
-                    | "apikey"
-                    | "token"
-                    | "access_token"
-                    | "auth"
-                    | "password"
-                    | "secret"
-            ) {
-                (k.to_string(), "***".into())
-            } else {
-                (k.to_string(), v.to_string())
-            }
-        })
+        .map(|(k, _v)| (k.to_string(), "***".into()))
         .collect();
-    if !pairs.is_empty() {
+    if pairs.is_empty() {
+        u.set_query(None);
+    } else {
         u.query_pairs_mut().clear();
         for (k, v) in pairs {
             u.query_pairs_mut().append_pair(&k, &v);
@@ -107,14 +111,13 @@ pub fn sanitize_url_for_display(raw: &str) -> String {
     u.to_string()
 }
 
+pub fn sanitize_url_with_redactor(raw: &str, redactor: &SecretRedactor) -> String {
+    redactor.redact(&sanitize_url_for_display(raw))
+}
+
 pub fn sanitize_error_body(body: &str, redactor: &SecretRedactor) -> String {
-    let mut s = redactor.redact(body);
-    const MAX: usize = 64 * 1024;
-    if s.len() > MAX {
-        s.truncate(MAX);
-        s.push_str("…[truncated]");
-    }
-    s
+    let s = redactor.redact(body);
+    truncate_utf8(&s, 64 * 1024)
 }
 
 #[cfg(test)]
@@ -140,10 +143,41 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_url_strips_userinfo() {
-        let s = sanitize_url_for_display("https://user:pass@api.example.com/v1?key=abc12345");
+    fn sanitize_url_strips_userinfo_and_all_query_values() {
+        let s = sanitize_url_for_display(
+            "https://user:pass@api.example.com/v1?key=abc12345&region=us-east",
+        );
         assert!(!s.contains("user"));
         assert!(!s.contains("pass"));
-        assert!(s.contains("***"));
+        assert!(!s.contains("abc12345"));
+        assert!(!s.contains("us-east"));
+        assert!(s.contains("key=***"));
+        assert!(s.contains("region=***"));
+    }
+
+    #[test]
+    fn sanitize_unknown_query_and_path_key() {
+        let mut r = SecretRedactor::new();
+        r.register_key("sk-path-secret-ABCDEFGH");
+        let s = sanitize_url_with_redactor(
+            "https://api.example.com/v1/sk-path-secret-ABCDEFGH?x-api-key=other",
+            &r,
+        );
+        assert!(!s.contains("sk-path-secret-ABCDEFGH"));
+        assert!(s.contains("x-api-key=***") || s.contains("***"));
+    }
+
+    #[test]
+    fn truncate_utf8_cjk_and_emoji() {
+        let s = "你好世界😀测试";
+        let t = truncate_utf8(s, 7);
+        assert!(t.ends_with('…'));
+        // must not panic and remain valid utf8
+        assert!(t.is_char_boundary(t.len() - "…".len()) || t.ends_with('…'));
+        assert_eq!(truncate_utf8("abc", 10), "abc");
+        assert_eq!(truncate_utf8("", 5), "");
+        // mid multi-byte
+        let mid = truncate_utf8("áéíóú", 3);
+        assert!(std::str::from_utf8(mid.as_bytes()).is_ok());
     }
 }

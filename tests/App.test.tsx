@@ -31,11 +31,22 @@ describe("App UI product shell", () => {
     expect(document.body.textContent).not.toMatch(/sk-[a-zA-Z0-9]{16,}/);
   });
 
-  it("primary diagnose button disabled without selection", async () => {
+  it("primary diagnose button enabled when CCS current auto-selected", async () => {
     const user = userEvent.setup();
     render(<App />);
     await dismissSafety(user);
-    expect(screen.getByRole("button", { name: /开始诊断/ })).toBeDisabled();
+    await screen.findByText("GLM Relay");
+    expect(screen.getByRole("button", { name: /开始诊断/ })).not.toBeDisabled();
+  });
+
+  it("concurrency control is available", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await dismissSafety(user);
+    expect(screen.getByRole("button", { name: "并发 1" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "并发 3" }));
+    // still idle
+    expect(screen.getByRole("button", { name: "刷新配置" })).not.toBeDisabled();
   });
 
   it("refresh clears selection so start becomes disabled", async () => {
@@ -44,17 +55,20 @@ describe("App UI product shell", () => {
     await dismissSafety(user);
     await screen.findByText("GLM Relay");
 
-    const glmCheck = screen.getByRole("checkbox", { name: "选择 GLM Relay" });
+    // Current providers are auto-selected after scan
+    const glmCheck = screen.getByRole("checkbox", { name: "选择 GLM Relay" }) as HTMLInputElement;
+    expect(glmCheck.checked).toBe(true);
+    expect(screen.getByRole("button", { name: /开始诊断/ })).not.toBeDisabled();
+
+    // uncheck then refresh should re-select current
     await user.click(glmCheck);
-    await waitFor(() => {
-      expect((glmCheck as HTMLInputElement).checked).toBe(true);
-      expect(screen.getByRole("button", { name: /开始诊断/ })).not.toBeDisabled();
-    });
+    expect(glmCheck.checked).toBe(false);
 
     await user.click(screen.getByRole("button", { name: "刷新配置" }));
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /开始诊断/ })).toBeDisabled();
+      const again = screen.getByRole("checkbox", { name: "选择 GLM Relay" }) as HTMLInputElement;
+      expect(again.checked).toBe(true);
     });
   });
 

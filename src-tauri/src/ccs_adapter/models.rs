@@ -152,6 +152,10 @@ pub struct NormalizedProvider {
     pub safe_base_url: String,
     pub website_url: Option<String>,
     pub api_format_hint: Option<String>,
+    /// Preferred HTTP auth scheme for the current config test (never a secret).
+    pub preferred_auth: Option<crate::protocols::types::AuthScheme>,
+    /// Credential source field name for UI (e.g. ANTHROPIC_AUTH_TOKEN).
+    pub credential_source: Option<String>,
 }
 
 impl NormalizedProvider {
@@ -196,6 +200,8 @@ pub struct ProviderListItem {
     pub skip_reason: Option<String>,
     pub needs_local_routing: Option<bool>,
     pub website_url: Option<String>,
+    pub credential_source: Option<String>,
+    pub preferred_auth_label: Option<String>,
 }
 
 impl From<&NormalizedProvider> for ProviderListItem {
@@ -219,6 +225,16 @@ impl From<&NormalizedProvider> for ProviderListItem {
             skip_reason: p.skip_reason.clone(),
             needs_local_routing: p.needs_local_routing,
             website_url: p.website_url.clone(),
+            credential_source: p.credential_source.clone(),
+            preferred_auth_label: p.preferred_auth.map(|a| {
+                match a {
+                    crate::protocols::types::AuthScheme::Bearer => "Bearer",
+                    crate::protocols::types::AuthScheme::XApiKey => "x-api-key",
+                    crate::protocols::types::AuthScheme::XGoogApiKey => "x-goog-api-key",
+                    crate::protocols::types::AuthScheme::QueryKey => "query-key",
+                }
+                .to_string()
+            }),
         }
     }
 }

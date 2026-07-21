@@ -133,6 +133,8 @@ impl AppState {
                     safe_base_url: p.safe_base_url.clone(),
                     website_url: p.website_url.clone(),
                     api_format_hint: p.api_format_hint.clone(),
+                    preferred_auth: p.preferred_auth,
+                    credential_source: p.credential_source.clone(),
                 });
             } else {
                 return Err(PublicError::NotFound(format!("未知配置 ID：{id}")));
@@ -156,6 +158,36 @@ impl AppState {
         g.active_cancel = Some(token.clone());
         g.active_run_id = Some(run_id);
         Ok(token)
+    }
+
+    pub fn cancel_run(&self, run_id: &str) -> PublicResult<()> {
+        let mut g = self
+            .inner
+            .lock()
+            .map_err(|_| PublicError::internal("lock"))?;
+        match &g.active_run_id {
+            Some(id) if id == run_id => {
+                if let Some(t) = g.active_cancel.take() {
+                    t.cancel();
+                }
+                // keep run id until complete_run so late events can still match? Spec: cancel matching only.
+                // Keep id until finished so frontend can wait for events; don't clear yet.
+                Ok(())
+            }
+            Some(_) => Err(PublicError::InvalidRequest(
+                "runId 不匹配当前活动诊断".into(),
+            )),
+            None => Ok(()), // no-op
+        }
+    }
+
+    pub fn complete_run(&self, run_id: &str) {
+        if let Ok(mut g) = self.inner.lock() {
+            if g.active_run_id.as_deref() == Some(run_id) {
+                g.active_cancel = None;
+                g.active_run_id = None;
+            }
+        }
     }
 
     pub fn cancel_all(&self) {

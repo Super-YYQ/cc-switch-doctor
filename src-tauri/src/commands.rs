@@ -117,22 +117,26 @@ pub async fn start_diagnosis(
     let mode = request.mode;
     let concurrency = request.concurrency;
     let app2 = app.clone();
+    let app_for_complete = app.clone();
     let rid = run_id.clone();
-
+    let rid_complete = run_id.clone();
     tauri::async_runtime::spawn(async move {
         run_diagnosis(rid, providers, mode, concurrency, cancel, move |event| {
             let _ = app2.emit("diagnosis_event", event);
         })
         .await;
+        // best-effort clear active run; ignore if app shutting down
+        use tauri::Manager;
+        let st = app_for_complete.state::<AppState>();
+        st.complete_run(&rid_complete);
     });
 
     Ok(RunHandle { run_id })
 }
 
 #[tauri::command]
-pub fn cancel_diagnosis(state: State<'_, AppState>, _run_id: String) -> PublicResult<()> {
-    state.cancel_all();
-    Ok(())
+pub fn cancel_diagnosis(state: State<'_, AppState>, run_id: String) -> PublicResult<()> {
+    state.cancel_run(&run_id)
 }
 
 #[tauri::command]

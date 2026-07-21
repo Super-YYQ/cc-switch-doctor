@@ -35,129 +35,122 @@ export function filterProviders(
 
 export function statusBadge(status: string): { label: string; kind: StatusKind; zh: string } {
   const map: Record<string, { label: string; kind: StatusKind; zh: string }> = {
-    CURRENT_CONFIG_OK: {
-      label: status,
-      kind: "ok",
-      zh: "当前配置可直接使用",
-    },
-    CORRECTED_BASE_PATH_OK: {
-      label: status,
-      kind: "info",
-      zh: "修正 Base URL / 路径后可用",
-    },
-    PROTOCOL_FALLBACK_OK: {
+    CURRENT_CONFIG_OK: { label: status, kind: "ok", zh: "当前配置可直接使用" },
+    CORRECTED_BASE_PATH_OK: { label: status, kind: "info", zh: "修正接口路径后可用" },
+    PROTOCOL_FALLBACK_OK: { label: status, kind: "info", zh: "切换协议后可用" },
+    AUTH_VARIANT_OK: { label: status, kind: "info", zh: "切换认证方式后可用" },
+    MODEL_VARIANT_OK: { label: status, kind: "info", zh: "更换模型后可用" },
+    MODEL_GUESS_OK: {
       label: status,
       kind: "info",
-      zh: "更换协议后可用",
-    },
-    AUTH_VARIANT_OK: {
-      label: status,
-      kind: "info",
-      zh: "调整认证格式后可用",
-    },
-    MODEL_VARIANT_OK: {
-      label: status,
-      kind: "info",
-      zh: "更换模型后可用",
+      zh: "使用推测模型测试成功，不能代表当前配置已完整验证",
     },
     LOCAL_ROUTING_REQUIRED: {
       label: status,
       kind: "warn",
-      zh: "上游 API 可用，但可能需要 CC Switch 本地路由",
+      zh: "需要 CC Switch 本地路由转换",
     },
-    KEY_INVALID: {
-      label: status,
-      kind: "danger",
-      zh: "API Key 无效或未授权",
-    },
-    PERMISSION_DENIED: {
-      label: status,
-      kind: "danger",
-      zh: "权限不足",
-    },
-    QUOTA_EXHAUSTED: {
-      label: status,
-      kind: "warn",
-      zh: "额度不足或配额耗尽",
-    },
-    RATE_LIMITED: {
+    KEY_INVALID: { label: status, kind: "danger", zh: "API Key 无效或已失效" },
+    AUTH_INVALID: { label: status, kind: "danger", zh: "API Key 无效或已失效" },
+    PERMISSION_DENIED: { label: status, kind: "danger", zh: "Key 有效性或权限不足" },
+    AUTH_PERMISSION_DENIED: { label: status, kind: "danger", zh: "Key 有效性或权限不足" },
+    QUOTA_EXHAUSTED: { label: status, kind: "warn", zh: "余额或额度不足" },
+    RATE_LIMITED: { label: status, kind: "warn", zh: "请求被限流" },
+    MODEL_NOT_FOUND: { label: status, kind: "warn", zh: "模型不存在或无访问权限" },
+    ENDPOINT_NOT_FOUND: { label: status, kind: "warn", zh: "接口路径不存在" },
+    GATEWAY_OR_WAF: { label: status, kind: "danger", zh: "网关或安全验证页面阻断" },
+    RESPONSE_FORMAT_MISMATCH: {
       label: status,
       kind: "warn",
-      zh: "触发限流，请稍后重试",
+      zh: "返回格式与预期不一致",
     },
-    MODEL_NOT_FOUND: {
+    UNSUPPORTED_PROTOCOL: {
       label: status,
       kind: "warn",
-      zh: "模型不存在或无权访问",
+      zh: "未发现兼容的协议组合",
     },
-    ENDPOINT_NOT_FOUND: {
+    NETWORK_UNREACHABLE: { label: status, kind: "danger", zh: "网络不可达" },
+    TLS_ERROR: { label: status, kind: "danger", zh: "TLS 或证书错误" },
+    TIMEOUT: { label: status, kind: "warn", zh: "请求超时" },
+    HOST_BUDGET_EXHAUSTED: {
       label: status,
       kind: "warn",
-      zh: "端点不存在，可尝试修正 /v1 或协议",
+      zh: "已达到本次 Host 请求上限",
     },
-    NETWORK_UNREACHABLE: {
-      label: status,
-      kind: "danger",
-      zh: "网络不可达",
-    },
-    TLS_ERROR: {
-      label: status,
-      kind: "danger",
-      zh: "TLS / 证书错误",
-    },
-    TIMEOUT: {
+    HOST_RATE_LIMIT_STOPPED: {
       label: status,
       kind: "warn",
-      zh: "请求超时",
+      zh: "连续限流，已停止继续请求",
     },
-    STREAMING_UNSUPPORTED: {
-      label: status,
-      kind: "warn",
-      zh: "流式调用不兼容",
-    },
-    TOOL_CALLING_UNSUPPORTED: {
-      label: status,
-      kind: "warn",
-      zh: "Tool Calling 不兼容",
-    },
+    STREAMING_UNSUPPORTED: { label: status, kind: "warn", zh: "流式调用不兼容" },
+    TOOL_CALLING_UNSUPPORTED: { label: status, kind: "warn", zh: "Tool Calling 不兼容" },
     MANAGED_AUTH_SKIPPED: {
       label: status,
       kind: "skip",
       zh: "托管登录 / OAuth 已安全跳过",
     },
-    UNKNOWN_SCHEMA: {
-      label: status,
-      kind: "schema",
-      zh: "Schema 未知，已停止测试",
-    },
+    UNKNOWN_SCHEMA: { label: status, kind: "schema", zh: "Schema 未知，已停止测试" },
     CROSS_ORIGIN_REDIRECT_BLOCKED: {
       label: status,
       kind: "danger",
       zh: "跨 Host 重定向已阻断",
     },
-    CANCELLED: {
-      label: status,
-      kind: "skip",
-      zh: "已取消",
-    },
-    UNKNOWN_ERROR: {
+    CANCELLED: { label: status, kind: "skip", zh: "已取消" },
+    INVALID_REQUEST_PARAMETER: {
       label: status,
       kind: "warn",
-      zh: "未知错误，请查看尝试链",
+      zh: "请求参数不被接口支持",
     },
+    UNKNOWN_ERROR: { label: status, kind: "warn", zh: "未知错误，请查看尝试链" },
   };
   return (
     map[status] ?? {
       label: status,
       kind: "warn",
-      zh: status,
+      zh: "诊断未给出明确结论，请查看尝试链",
     }
   );
+}
+
+export function possibleCauses(status: string): string[] | null {
+  if (
+    status === "UNSUPPORTED_PROTOCOL" ||
+    status === "RESPONSE_FORMAT_MISMATCH" ||
+    status === "UNKNOWN_ERROR"
+  ) {
+    return [
+      "当前接口路径或协议格式不匹配",
+      "上游返回了非标准错误结构",
+      "Key、权限或余额错误未使用标准 HTTP 状态",
+      "中转站返回了网关/WAF 页面",
+    ];
+  }
+  return null;
 }
 
 export function estimateClientSide(count: number, mode: "quick" | "smart" | "deep"): number {
   const per = mode === "quick" ? 2 : mode === "smart" ? 12 : 16;
   return count * per;
+}
+
+export function modeDescription(mode: "quick" | "smart" | "deep"): string {
+  if (mode === "quick") {
+    return "快速验证：只优先测试当前配置，速度最快、Token 最低。";
+  }
+  if (mode === "smart") {
+    return "智能诊断：失败后自动尝试同 Host 的 URL、协议、认证和模型变体（最多约 12 次/配置）。";
+  }
+  return "深度兼容：在智能诊断基础上测试 Streaming、Tool Calling 与稳定性（最多约 16 次/配置）。";
+}
+
+export function modeTooltip(mode: "quick" | "smart" | "deep"): string {
+  if (mode === "quick") {
+    return "只优先测试当前配置的 URL、协议、认证方式和模型。速度最快、Token 消耗最低，适合日常确认。不进行大范围变体、Streaming 或 Tool Calling。";
+  }
+  if (mode === "smart") {
+    return "先测当前配置；失败后按错误类型尝试同 Host 的安全 URL、协议、认证和模型变体。适合排查 /v1、协议格式、认证 Header、模型名。每配置最多约 12 次真实请求。";
+  }
+  return "在智能诊断基础上继续测试 Streaming、Tool Calling 和稳定性复测。耗时和 Token 最高。每配置最多约 16 次真实请求，仍遵守 Host 30 次会话上限。";
 }
 
 export function assertNoFullKeyInDom(text: string): boolean {
@@ -193,4 +186,8 @@ export function schemaLabel(status?: string | null): string {
   if (status === "unknown") return "Schema 未知";
   if (status === "unsupported") return "Schema 不支持";
   return "Schema —";
+}
+
+export function defaultSelectedIds(providers: ProviderListItem[]): Set<string> {
+  return new Set(providers.filter((p) => p.isCurrent && p.selectable).map((p) => p.opaqueId));
 }

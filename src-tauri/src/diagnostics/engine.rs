@@ -1,12 +1,13 @@
-use super::classifier::final_status_from_attempts;
+use super::classifier::{best_classification, final_status_from_attempts};
 use super::planner::{plan_attempts, DiagnosisMode, PlannedAttempt};
-use super::session_budget::{key_fingerprint, OriginKey, RequestCacheKey, SessionBudget};
+use super::session_budget::{cache_key_from_built, key_fingerprint, OriginKey, SessionBudget};
 use crate::ccs_adapter::{NormalizedProvider, ProtocolKind};
 use crate::protocols::anthropic::build_anthropic_request;
 use crate::protocols::gemini::build_gemini_request;
 use crate::protocols::http_executor::HttpExecutor;
 use crate::protocols::openai_chat::build_chat_request;
 use crate::protocols::openai_responses::build_responses_request;
+use crate::protocols::types::AuthScheme;
 use crate::protocols::types::{
     default_timeout, is_max_completion_tokens_unsupported, AttemptResult, RequestPurpose,
     TokenLimitField,
@@ -411,11 +412,18 @@ async fn diagnose_one(
         false
     };
 
-    let best_class = attempts
-        .iter()
-        .find(|a| !a.ok)
-        .map(|a| a.classification.clone())
-        .unwrap_or_else(|| "UNKNOWN_ERROR".into());
+    let best_class = {
+        let failed: Vec<&str> = attempts
+            .iter()
+            .filter(|a| !a.ok)
+            .map(|a| a.classification.as_str())
+            .collect();
+        if failed.is_empty() {
+            "UNKNOWN_ERROR".into()
+        } else {
+            best_classification(failed)
+        }
+    };
 
     let status = if provider.skip_reason.is_some() {
         "MANAGED_AUTH_SKIPPED".into()
@@ -534,42 +542,7 @@ async fn execute_plan(
 ) -> AttemptResult {
     let safe_url = crate::security::sanitize_url_for_display(&plan.base_url);
 
-    let cache_key = RequestCacheKey {
-        origin: origin_key.clone(),
-        key_fingerprint: key_fp.to_string(),
-        protocol: plan.protocol,
-        model: plan.model.clone(),
-        purpose: if plan.tool_call {
-            RequestPurpose::ToolCall
-        } else if plan.stream {
-            RequestPurpose::StreamGenerate
-        } else {
-            RequestPurpose::Generate
-        },
-        stream: plan.stream,
-        tool_call: plan.tool_call,
-        token_limit_field: if plan.protocol == ProtocolKind::OpenAiChat {
-            token_field
-        } else {
-            TokenLimitField::MaxCompletionTokens
-        },
-    };
-    if let Some(cached) = session_budget.get_cached(&cache_key) {
-        return cached;
-    }
-
-    if let Err(reason) = session_budget.try_reserve_send(origin_key) {
-        return AttemptResult::budget_stopped(
-            plan.protocol,
-            &plan.model,
-            &safe_url,
-            reason.message(),
-            reason.classification(),
-        );
-    }
-
     if cancel.is_cancelled() {
-        session_budget.release_unsent(origin_key);
         return AttemptResult {
             ok: false,
             partial: false,
@@ -580,7 +553,13 @@ async fn execute_plan(
             model: plan.model.clone(),
             url: safe_url,
             stream: plan.stream,
-            purpose: cache_key.purpose,
+            purpose: if plan.tool_call {
+                RequestPurpose::ToolCall
+            } else if plan.stream {
+                RequestPurpose::StreamGenerate
+            } else {
+                RequestPurpose::Generate
+            },
             extracted_text: None,
             tool_call_ok: None,
             error_kind: Some("cancelled".into()),
@@ -596,6 +575,19 @@ async fn execute_plan(
 
     let key = provider.api_key.expose_secret();
     let ua = provider.custom_user_agent.as_deref();
+    let auth_scheme = match plan.protocol {
+        ProtocolKind::OpenAiChat | ProtocolKind::OpenAiResponses => AuthScheme::Bearer,
+        ProtocolKind::AnthropicMessages => {
+            if plan.use_bearer_for_anthropic {
+                AuthScheme::Bearer
+            } else {
+                provider.preferred_auth.unwrap_or(AuthScheme::XApiKey)
+            }
+        }
+        ProtocolKind::GeminiNative => AuthScheme::XGoogApiKey,
+        ProtocolKind::Unknown => AuthScheme::Bearer,
+    };
+
     let built = match plan.protocol {
         ProtocolKind::OpenAiChat => build_chat_request(
             &plan.base_url,
@@ -620,7 +612,7 @@ async fn execute_plan(
             key,
             plan.stream,
             plan.tool_call,
-            plan.use_bearer_for_anthropic,
+            matches!(auth_scheme, AuthScheme::Bearer),
             ua,
         ),
         ProtocolKind::GeminiNative => build_gemini_request(
@@ -632,7 +624,6 @@ async fn execute_plan(
             ua,
         ),
         ProtocolKind::Unknown => {
-            session_budget.release_unsent(origin_key);
             return AttemptResult {
                 ok: false,
                 partial: false,
@@ -658,23 +649,72 @@ async fn execute_plan(
         }
     };
 
-    let timeout = default_timeout(mode == DiagnosisMode::Deep || plan.stream);
-    let mut result = exec
-        .execute(built, origin_policy, redactor, cancel, timeout)
-        .await;
-    result.token_limit_field = if plan.protocol == ProtocolKind::OpenAiChat {
+    let token_for_key = if plan.protocol == ProtocolKind::OpenAiChat {
         Some(token_field)
     } else {
         None
     };
+    let cache_key = cache_key_from_built(origin_key, &built, key_fp, token_for_key, auth_scheme);
+
+    if let Some(cached) = session_budget.get_cached(&cache_key) {
+        return cached;
+    }
+    if let Some(peer) = session_budget.begin_or_wait_flight(&cache_key) {
+        return peer;
+    }
+
+    if let Err(reason) = session_budget.try_reserve_send(origin_key) {
+        let r = AttemptResult::budget_stopped(
+            plan.protocol,
+            &plan.model,
+            &safe_url,
+            reason.message(),
+            reason.classification(),
+        );
+        session_budget.finish_flight(&cache_key, r.clone());
+        return r;
+    }
+
+    if cancel.is_cancelled() {
+        session_budget.release_unsent(origin_key);
+        let r = AttemptResult {
+            ok: false,
+            partial: false,
+            status_code: None,
+            latency_ms: 0,
+            ttft_ms: None,
+            protocol: plan.protocol,
+            model: plan.model.clone(),
+            url: safe_url,
+            stream: plan.stream,
+            purpose: built.purpose,
+            extracted_text: None,
+            tool_call_ok: None,
+            error_kind: Some("cancelled".into()),
+            error_message: Some("已取消".into()),
+            response_excerpt: None,
+            classification: "CANCELLED".into(),
+            http_sent: false,
+            reused_from_cache: false,
+            suggestion_note: None,
+            token_limit_field: token_for_key,
+        };
+        session_budget.finish_flight(&cache_key, r.clone());
+        return r;
+    }
+
+    let timeout = default_timeout(mode == DiagnosisMode::Deep || plan.stream);
+    let mut result = exec
+        .execute(built, origin_policy, redactor, cancel, timeout)
+        .await;
+    result.token_limit_field = token_for_key;
 
     if !result.http_sent {
         session_budget.release_unsent(origin_key);
     } else {
         session_budget.record_result(origin_key, &result.classification);
-        session_budget.store_cache(cache_key, result.clone());
     }
-
+    session_budget.finish_flight(&cache_key, result.clone());
     result
 }
 

@@ -13,7 +13,7 @@ use super::types::{
 use crate::ccs_adapter::ProtocolKind;
 use crate::diagnostics::classifier::classify_http_failure;
 use crate::security::origin::SameOriginPolicy;
-use crate::security::redact::{sanitize_url_for_display, SecretRedactor};
+use crate::security::redact::{sanitize_url_for_display, truncate_utf8, SecretRedactor};
 use futures_util::StreamExt;
 use reqwest::{redirect::Policy, Client, StatusCode};
 use std::time::{Duration, Instant};
@@ -692,11 +692,7 @@ impl HttpExecutor {
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max])
-    }
+    truncate_utf8(s, max)
 }
 
 // silence unused import warning for StatusCode in some builds

@@ -46,13 +46,17 @@ pub fn plan_attempts(provider: &NormalizedProvider, mode: DiagnosisMode) -> Vec<
         .unwrap_or_else(|| default_protocol(provider.app_type));
 
     // 1. Current config (highest priority)
+    let current_use_bearer = matches!(
+        provider.preferred_auth,
+        Some(crate::protocols::types::AuthScheme::Bearer)
+    );
     plans.push(PlannedAttempt {
         base_url: provider.base_url.clone(),
         protocol,
         model: model.clone(),
         stream: false,
         tool_call: false,
-        use_bearer_for_anthropic: false,
+        use_bearer_for_anthropic: current_use_bearer,
         is_current_config: true,
         score: 1000,
         label: "当前配置".into(),
@@ -292,6 +296,8 @@ mod tests {
             safe_base_url: "https://api.example.com".into(),
             website_url: None,
             api_format_hint: None,
+            preferred_auth: Some(crate::protocols::types::AuthScheme::Bearer),
+            credential_source: Some("OPENAI_API_KEY".into()),
         }
     }
 

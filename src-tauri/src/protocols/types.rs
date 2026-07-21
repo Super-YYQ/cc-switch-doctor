@@ -1,5 +1,5 @@
 use crate::ccs_adapter::ProtocolKind;
-use crate::security::redact::SecretRedactor;
+use crate::security::redact::{truncate_utf8, SecretRedactor};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -12,7 +12,7 @@ pub const MAX_TOKENS: u32 = 16;
 pub const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_ERROR_BYTES: usize = 64 * 1024;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthScheme {
     Bearer,
@@ -62,6 +62,18 @@ impl TokenLimitField {
     pub fn label(self) -> &'static str {
         self.as_json_key()
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ErrorEvidence {
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_keyword: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,11 +261,7 @@ pub fn redact_result(mut r: AttemptResult, redactor: &SecretRedactor) -> Attempt
         *m = redactor.redact(m);
     }
     if let Some(ex) = r.response_excerpt.as_mut() {
-        *ex = redactor.redact(ex);
-        if ex.len() > 512 {
-            ex.truncate(512);
-            ex.push('…');
-        }
+        *ex = truncate_utf8(&redactor.redact(ex), 512);
     }
     r
 }

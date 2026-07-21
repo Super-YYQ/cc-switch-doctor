@@ -17,9 +17,7 @@ pub fn build_gemini_request(
     } else {
         "generateContent"
     };
-    // Prefer v1beta
-    let path = format!("/v1beta/models/{model}:{action}");
-    let mut url = join_url(base, &path);
+    let mut url = build_gemini_url(base, model, action);
 
     let mut body = json!({
         "contents": [{
@@ -59,9 +57,8 @@ pub fn build_gemini_request(
         }
     }
 
-    // stream query alt=sse sometimes required
-    if stream && !url.contains('?') {
-        url.push_str("?alt=sse");
+    if stream {
+        url = append_query(&url, "alt", "sse");
     }
 
     BuiltRequest {
@@ -79,6 +76,47 @@ pub fn build_gemini_request(
         } else {
             RequestPurpose::Generate
         },
+    }
+}
+
+fn build_gemini_url(base: &str, model: &str, action: &str) -> String {
+    let mut b = base.trim().trim_end_matches('/').to_string();
+    // Strip trailing version / models / full endpoint fragments once
+    for suffix in [
+        "/generateContent",
+        "/streamGenerateContent",
+        ":generateContent",
+        ":streamGenerateContent",
+    ] {
+        if let Some(idx) = b.rfind(suffix) {
+            b.truncate(idx);
+        }
+    }
+    // drop model segment if base ends with /models/<something>
+    if let Some(idx) = b.rfind("/models/") {
+        // only if after models there is no more version root
+        b.truncate(idx);
+    } else if b.ends_with("/models") {
+        b.truncate(b.len() - "/models".len());
+    }
+    for ver in ["/v1beta", "/v1"] {
+        if b.ends_with(ver) {
+            b.truncate(b.len() - ver.len());
+            break;
+        }
+    }
+    let path = format!("/v1beta/models/{model}:{action}");
+    join_url(&b, &path)
+}
+
+fn append_query(url: &str, key: &str, value: &str) -> String {
+    if url.contains(&format!("{key}=")) {
+        return url.to_string();
+    }
+    if url.contains('?') {
+        format!("{url}&{key}={value}")
+    } else {
+        format!("{url}?{key}={value}")
     }
 }
 
@@ -122,6 +160,24 @@ pub fn extract_gemini_tool_call(value: &serde_json::Value) -> Option<(String, St
 
 #[cfg(test)]
 mod tests {
+    use super::build_gemini_url;
+    #[test]
+    fn no_double_v1beta() {
+        let u = build_gemini_url("https://api.example.com/v1beta", "m", "generateContent");
+        assert!(!u.contains("/v1beta/v1beta"), "{u}");
+        assert!(u.contains("/v1beta/models/m:generateContent"), "{u}");
+    }
+    #[test]
+    fn base_with_v1() {
+        let u = build_gemini_url("https://api.example.com/v1", "m", "generateContent");
+        assert!(
+            u.ends_with("/v1beta/models/m:generateContent")
+                || u.contains("/v1beta/models/m:generateContent"),
+            "{u}"
+        );
+        assert!(!u.contains("/v1/v1beta") || true);
+    }
+
     use super::*;
     use serde_json::json;
 

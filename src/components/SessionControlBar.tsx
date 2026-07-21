@@ -1,8 +1,10 @@
 import { Activity, Loader2, Square, RotateCcw } from "lucide-react";
 import type { DiagnosisMode } from "@/types";
+import { modeDescription, modeTooltip } from "@/lib/utils";
 
 interface Props {
   mode: DiagnosisMode;
+  concurrency: number;
   selectedCount: number;
   estimated: number;
   running: boolean;
@@ -11,13 +13,16 @@ interface Props {
   sentRequests: number;
   currentName?: string | null;
   disabledStart: boolean;
+  stopping?: boolean;
   onMode: (m: DiagnosisMode) => void;
+  onConcurrency: (n: number) => void;
   onStart: () => void;
   onCancel: () => void;
 }
 
 export function SessionControlBar({
   mode,
+  concurrency,
   selectedCount,
   estimated,
   running,
@@ -26,7 +31,9 @@ export function SessionControlBar({
   sentRequests,
   currentName,
   disabledStart,
+  stopping,
   onMode,
+  onConcurrency,
   onStart,
   onCancel,
 }: Props) {
@@ -59,15 +66,29 @@ export function SessionControlBar({
                 className={mode === id ? "active" : ""}
                 disabled={running}
                 onClick={() => onMode(id)}
-                title={
-                  id === "quick"
-                    ? "只测当前配置"
-                    : id === "smart"
-                      ? "失败时尝试受控变体"
-                      : "额外测试流式与 Tool Calling"
-                }
+                title={modeTooltip(id)}
               >
                 {label}
+              </button>
+            ))}
+          </div>
+
+          <div
+            className="segmented"
+            role="radiogroup"
+            aria-label="并发数"
+            title="同时诊断的 Provider 数量。默认 1 最稳妥；2–3 更快，但更容易触发中转站限流。无论并发多少，同一 Host 每次会话仍最多发送 30 次真实请求。"
+          >
+            {([1, 2, 3] as const).map((n) => (
+              <button
+                key={n}
+                type="button"
+                className={concurrency === n ? "active" : ""}
+                disabled={running}
+                onClick={() => onConcurrency(n)}
+                aria-label={`并发 ${n}`}
+              >
+                {n}
               </button>
             ))}
           </div>
@@ -75,13 +96,15 @@ export function SessionControlBar({
           <div className="muted" style={{ fontSize: 13 }}>
             {running ? (
               <>
+                {stopping ? "正在停止… · " : ""}
                 完成 {completed} / {total} · 请求 {sentRequests} / {estimated}
                 {currentName ? ` · 当前：${currentName}` : ""}
               </>
             ) : (
               <>
                 已选 <strong style={{ color: "var(--text)" }}>{selectedCount}</strong> · 预计最多{" "}
-                <strong style={{ color: "var(--text)" }}>{estimated}</strong> 请求 · 并发 1
+                <strong style={{ color: "var(--text)" }}>{estimated}</strong> 请求 · 并发{" "}
+                {concurrency}
               </>
             )}
           </div>
@@ -89,8 +112,8 @@ export function SessionControlBar({
 
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {running ? (
-            <button className="btn btn-danger" type="button" onClick={onCancel}>
-              <Square size={14} /> 停止
+            <button className="btn btn-danger" type="button" onClick={onCancel} disabled={stopping}>
+              <Square size={14} /> {stopping ? "正在停止" : "停止"}
             </button>
           ) : (
             <button
@@ -107,6 +130,10 @@ export function SessionControlBar({
             <Loader2 size={16} className="muted" style={{ animation: "spin 1s linear infinite" }} />
           )}
         </div>
+      </div>
+
+      <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+        {modeDescription(mode)}
       </div>
 
       {running && (
