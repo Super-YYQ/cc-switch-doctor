@@ -68,6 +68,27 @@ describe("statusBadge", () => {
     expect(statusBadge("KEY_INVALID").kind).toBe("danger");
     expect(statusBadge("MANAGED_AUTH_SKIPPED").kind).toBe("skip");
   });
+
+  // v0.1.7 P0: primary badge must reflect real direct outcomes, not route disposition labels alone.
+  it("keeps network / auth failures as danger primary outcomes", () => {
+    expect(statusBadge("NETWORK_UNREACHABLE").kind).toBe("danger");
+    expect(statusBadge("NETWORK_UNREACHABLE").zh).toContain("网络");
+    expect(statusBadge("AUTH_INVALID").kind).toBe("danger");
+    expect(statusBadge("AUTH_PERMISSION_DENIED").kind).toBe("danger");
+    expect(statusBadge("QUOTA_EXHAUSTED").kind).toBe("warn");
+    expect(statusBadge("MODEL_NOT_FOUND").kind).toBe("warn");
+    expect(statusBadge("ENDPOINT_NOT_FOUND").kind).toBe("warn");
+    expect(statusBadge("TLS_ERROR").kind).toBe("danger");
+  });
+
+  it("treats route disposition codes as auxiliary labels only", () => {
+    // These may still appear in routeStatus chips, never as sole primary when route was not sent.
+    expect(statusBadge("CCS_ROUTE_NOT_APPLICABLE").kind).toBe("skip");
+    expect(statusBadge("CCS_ROUTE_NOT_RUNNING").kind).toBe("warn");
+    expect(statusBadge("CCS_ROUTE_OK_DIRECT_NATIVE_OK").kind).toBe("ok");
+    expect(statusBadge("CCS_ROUTE_FAILED_DIRECT_OK").kind).toBe("warn");
+    expect(statusBadge("CCS_ROUTE_AND_DIRECT_FAILED").kind).toBe("danger");
+  });
 });
 
 describe("estimate, host and key safety", () => {

@@ -1,7 +1,7 @@
 use super::classifier::{best_classification, final_status_from_attempts};
 use super::planner::{plan_attempts, DiagnosisMode, PlannedAttempt};
 use super::route_planner::{
-    build_route_request, combine_route_direct_status, plan_route_attempts, route_applicable,
+    build_route_request, combine_attempted_route_and_direct, plan_route_attempts, route_applicable,
     route_side_effect_notice, RouteApplicability, VerifyMode, ROUTE_SEND_BUDGET_PER_APP,
 };
 use super::session_budget::{
@@ -288,10 +288,11 @@ async fn diagnose_one(
     let model_is_guessed = provider.configured_model.is_none();
 
     // --- CCS local route channel ---
+    // route_classification / route_target_mismatch are auxiliary metadata for the UI.
+    // They only participate in Provider primary status when a real route HTTP request
+    // was sent (see route_attempted below).
     let mut route_ok: Option<bool> = None;
     let mut route_classification: Option<String> = None;
-    let mut route_not_running = false;
-    let mut route_not_applicable = false;
     let mut route_target_mismatch = false;
     let mut route_notice: Option<String> = None;
     let route_index_base = 10_000usize;
@@ -305,7 +306,8 @@ async fn diagnose_one(
                     .map(|g| g.contains(&app_key))
                     .unwrap_or(false);
                 if already {
-                    route_not_applicable = true;
+                    // Another provider in this run already consumed the app route budget.
+                    // Surface as auxiliary disposition only — never primary.
                     route_classification = Some("CCS_ROUTE_NOT_APPLICABLE".into());
                 } else {
                     let rplans = plan_route_attempts(&provider, routing_view, mode, &app_row);
@@ -395,24 +397,21 @@ async fn diagnose_one(
                 }
             }
             RouteApplicability::NotRunning => {
-                route_not_running = true;
                 route_classification = Some("CCS_ROUTE_NOT_RUNNING".into());
             }
             RouteApplicability::NotCurrentTarget => {
-                route_not_applicable = true;
                 route_classification = Some("CCS_ROUTE_NOT_APPLICABLE".into());
             }
             RouteApplicability::TargetMismatch { .. } => {
-                route_target_mismatch = true;
+                // Pre-send applicability only: keep as route_status, not primary.
                 route_classification = Some("CCS_ROUTE_TARGET_MISMATCH".into());
             }
             RouteApplicability::Skip(_msg) => {
-                route_not_applicable = true;
+                // DirectOnly / not configured / non-loopback / app disabled, etc.
                 route_classification = Some("CCS_ROUTE_NOT_APPLICABLE".into());
             }
         }
     } else if verify_mode == VerifyMode::DirectAndRoute {
-        route_not_running = true;
         route_classification = Some("CCS_ROUTE_NOT_RUNNING".into());
     }
 
@@ -771,26 +770,30 @@ async fn diagnose_one(
         direct_status = "MODEL_GUESS_OK".into();
     }
 
+    // Route disposition metadata (NotRunning / NotCurrentTarget / Skip / etc.)
+    // is retained in route_status for the UI, but MUST NOT become the primary
+    // provider outcome unless a real CCS route business request was sent.
+    let route_attempted = attempts
+        .iter()
+        .any(|a| a.channel == DiagnosisChannel::CcsLocalRoute && a.http_sent);
+    // When another provider already consumed the app route budget, mark that as
+    // auxiliary disposition rather than a primary error.
     let route_status_str = route_classification.clone();
     let status = if provider.skip_reason.is_some() {
         "MANAGED_AUTH_SKIPPED".into()
-    } else if routing.is_some()
-        || verify_mode == VerifyMode::DirectAndRoute
-        || route_ok.is_some()
-        || route_not_running
-        || route_target_mismatch
-    {
-        combine_route_direct_status(
+    } else if route_attempted {
+        // Only combine when a real route HTTP request was sent.
+        // Target mismatch observed after a real send may still raise CCS_ROUTE_TARGET_MISMATCH.
+        combine_attempted_route_and_direct(
             route_ok,
-            route_classification.as_deref(),
             direct_native_ok,
             direct_variant_ok,
             direct_failed,
-            route_not_running,
-            route_not_applicable,
             route_target_mismatch,
         )
     } else {
+        // NotRequested / NotRunning / NotCurrentTarget / Skip / DirectOnly /
+        // BlockedNonLoopback / already-deduped app route → primary = direct.
         direct_status.clone()
     };
 
@@ -813,8 +816,32 @@ async fn diagnose_one(
         }
     } else if status == "CCS_ROUTE_TARGET_MISMATCH" {
         suggestion = "CCS 路由请求成功，但实际由另一 Provider 处理；本结果验证的是当前路由链，不代表所选 Provider 已通过。".into();
-    } else if status == "CCS_ROUTE_NOT_RUNNING" {
-        suggestion = "CCS 路由已配置但未运行；已仅执行上游直连诊断。".into();
+    } else if status == "CCS_ROUTE_FAILED_DIRECT_OK" {
+        suggestion = "上游直连可用，但当前 CCS 路由链请求失败。请检查 CCS 路由是否运行、目标 Provider 与映射。".into();
+    } else if status == "CCS_ROUTE_AND_DIRECT_FAILED" {
+        suggestion = "CCS 路由与上游直连均失败。请先查看直连错误与路由尝试链。".into();
+    } else if !route_attempted {
+        // Route disposition is auxiliary only — never rewrite the direct-based suggestion.
+        if let Some(rs) = route_status_str.as_deref() {
+            match rs {
+                "CCS_ROUTE_NOT_RUNNING" => {
+                    suggestion = format!(
+                        "{suggestion} （辅助：CCS 路由已配置但未运行，本次未执行路由验证。）"
+                    );
+                }
+                "CCS_ROUTE_NOT_APPLICABLE" => {
+                    suggestion = format!(
+                        "{suggestion} （辅助：CCS 路由未验证——非当前路由目标、仅直连模式，或该 App 路由不可用。）"
+                    );
+                }
+                "CCS_ROUTE_TARGET_MISMATCH" => {
+                    suggestion = format!(
+                        "{suggestion} （辅助：所选 Provider 与当前 CCS 路由目标不一致，未执行该 Provider 的路由业务请求。）"
+                    );
+                }
+                _ => {}
+            }
+        }
     }
     if model_is_guessed && any_ok {
         suggestion = format!(
