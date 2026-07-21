@@ -1,3 +1,29 @@
+## [0.1.6] — 2026-07-21
+
+### Added
+
+- Dual-channel diagnosis: Direct Upstream vs CCS Local Route
+- Read-only `proxy_config` discovery + loopback `/health` `/status` probes
+- Verify mode: Auto / Direct only / Direct + CCS route
+- Client-protocol route attempts with `PROXY_MANAGED` placeholder only
+- Provider ↔ Result bidirectional navigation and result index control
+- Routing status chips and dual-channel ResultCard sections
+
+### Fixed
+
+- Cross-protocol / loose-field success no longer becomes CURRENT_CONFIG_OK
+- `error: null/false/""/{}/[]` no longer short-circuits success parse
+- Streaming cross-protocol deltas + 2MB raw buffer fallback
+- Streaming non-2xx bodies bounded (no `response.text()`)
+- Broader Anthropic/OpenAI/Gemini text extractors
+- Default window size 1100×740
+
+### Security
+
+- Route requests never carry provider real keys
+- Non-loopback listen addresses blocked from auto probe
+- proxy_config remains SELECT-only
+
 ## [0.1.5] — 2026-07-21
 
 ### Fixed
