@@ -122,12 +122,51 @@ export interface AttemptResult {
   matchedProtocol?: string | null;
 }
 
+export type RouteDisposition =
+  | "not_requested"
+  | "not_configured"
+  | "not_running"
+  | "not_current_target"
+  | "unsupported_app"
+  | "blocked_non_loopback"
+  | "attempted";
+
+export interface CapabilityOutcome {
+  attempted: boolean;
+  success: boolean;
+  status: string;
+}
+
+export interface DirectChannelSummary {
+  attempted: boolean;
+  status: string;
+  success: boolean;
+  nativeSuccess: boolean;
+  bestAttemptIndex?: number | null;
+}
+
+export interface RouteChannelSummary {
+  disposition: RouteDisposition;
+  attempted: boolean;
+  generate?: CapabilityOutcome | null;
+  streaming?: CapabilityOutcome | null;
+  overallStatus?: string | null;
+  actualProviderId?: string | null;
+  actualProviderName?: string | null;
+  failoverCountBefore?: number | null;
+  failoverCountAfter?: number | null;
+  notice?: string | null;
+}
+
 export interface ProviderDiagnosisSummary {
   opaqueId: string;
   sourceId: string;
   displayName: string;
   appLabel: string;
+  /** Primary outcome (compat alias of primaryOutcome). */
   status: string;
+  /** Explicit primary outcome; equals status when present. */
+  primaryOutcome?: string;
   currentConfigOk: boolean;
   anySuccess: boolean;
   safeBaseUrl: string;
@@ -141,6 +180,10 @@ export interface ProviderDiagnosisSummary {
   evidence: string[];
   attempts: AttemptResult[];
   confidence: string;
+  /** Layered direct-channel summary. */
+  direct?: DirectChannelSummary | null;
+  /** Layered route-channel summary. Disposition is never primary. */
+  route?: RouteChannelSummary | null;
   routeStatus?: string | null;
   directStatus?: string | null;
   routeSideEffectNotice?: string | null;

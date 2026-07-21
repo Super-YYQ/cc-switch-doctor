@@ -1,0 +1,6 @@
+{
+  "id": "resp_fixture_null",
+  "object": "response",
+  "status": "completed",
+  "output": null
+}

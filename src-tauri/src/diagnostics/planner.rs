@@ -260,12 +260,9 @@ fn default_protocol(app: AppType) -> ProtocolKind {
 }
 
 fn default_model(app: AppType) -> String {
-    match app {
-        AppType::Claude | AppType::ClaudeDesktop => "claude-sonnet-4-20250514".into(),
-        AppType::Codex => "gpt-5".into(),
-        AppType::Gemini => "gemini-2.0-flash".into(),
-        _ => "gpt-4o-mini".into(),
-    }
+    // Profile-bound defaults — never invent dated Anthropic IDs.
+    // Source: docs/research/v0.1.7-source-review.md + compatibility routingProfiles.
+    crate::ccs_adapter::routing_profile::default_direct_model_guess(app)
 }
 
 #[cfg(test)]

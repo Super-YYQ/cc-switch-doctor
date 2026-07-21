@@ -2,7 +2,7 @@ import { Stethoscope } from "lucide-react";
 import type { ProviderDiagnosisSummary, ProviderListItem } from "@/types";
 import { ResultCard } from "./ResultCard";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { statusBadge } from "@/lib/utils";
+import { statusBadge, primaryStatusCode } from "@/lib/utils";
 
 interface Props {
   summaries: ProviderDiagnosisSummary[];
@@ -17,7 +17,7 @@ interface Props {
 type Filter = "all" | "needs" | "fail" | "ok" | "skip";
 
 function priority(s: ProviderDiagnosisSummary): number {
-  const b = statusBadge(s.status).kind;
+  const b = statusBadge(primaryStatusCode(s)).kind;
   if (b === "info" || s.needsLocalRouting) return 0;
   if (b === "danger" || b === "warn") return 1;
   if (b === "ok") return 2;
@@ -60,7 +60,7 @@ export function DiagnosisWorkspace({
   }, [ordered, filter]);
 
   const filtered = sorted.filter((s) => {
-    const k = statusBadge(s.status).kind;
+    const k = statusBadge(primaryStatusCode(s)).kind;
     if (filter === "all") return true;
     if (filter === "ok") return k === "ok";
     if (filter === "skip") return k === "skip";
@@ -74,7 +74,7 @@ export function DiagnosisWorkspace({
     let needs = 0;
     let fail = 0;
     for (const s of summaries) {
-      const k = statusBadge(s.status).kind;
+      const k = statusBadge(primaryStatusCode(s)).kind;
       if (k === "ok" && s.currentConfigOk) ok++;
       else if (k === "info" || s.anySuccess) needs++;
       else if (k !== "skip") fail++;
@@ -172,7 +172,7 @@ export function DiagnosisWorkspace({
               <option value="">选择 Provider</option>
               {filtered.map((s) => (
                 <option key={s.opaqueId} value={s.opaqueId}>
-                  {statusBadge(s.status).zh} · {s.appLabel}/{s.displayName}
+                  {statusBadge(primaryStatusCode(s)).zh} · {s.appLabel}/{s.displayName}
                 </option>
               ))}
             </select>

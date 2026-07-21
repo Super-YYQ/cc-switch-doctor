@@ -5,6 +5,7 @@ pub mod normalize;
 pub mod path_discovery;
 pub mod readonly_db;
 pub mod routing;
+pub mod routing_profile;
 pub mod scan;
 
 pub use fingerprint::{compute_fingerprint, CompatibilityStatus, SchemaFingerprint};
@@ -17,5 +18,8 @@ pub use readonly_db::open_readonly;
 pub use routing::{
     discover_routing_status_sync, loopback_connect_host, route_base_url, RoutingStatusView,
     CCS_PROXY_PLACEHOLDER_TOKEN,
+};
+pub use routing_profile::{
+    active_routing_profile, client_route_model, default_direct_model_guess, route_profile_verified,
 };
 pub use scan::scan_database;

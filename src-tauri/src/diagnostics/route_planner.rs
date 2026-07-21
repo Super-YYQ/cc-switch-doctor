@@ -135,28 +135,20 @@ pub fn client_protocol_for_app(app: AppType) -> ProtocolKind {
     }
 }
 
-/// Client-visible model for route tests (role alias when possible).
+/// Client-visible model for route tests (profile-bound role aliases).
+///
+/// Source: `compatibility/manifest.json` → `routingProfiles` (see
+/// `docs/research/v0.1.7-source-review.md`). Never scatter dated Anthropic IDs.
 pub fn client_model_for_app(app: AppType, provider: &NormalizedProvider) -> String {
-    match app {
-        AppType::Claude | AppType::ClaudeDesktop => {
-            // Prefer stable client role aliases used by Claude Code
-            "claude-sonnet-4-20250514".into()
-        }
-        AppType::Codex => provider
-            .configured_model
-            .clone()
-            .or_else(|| provider.model_candidates.first().cloned())
-            .unwrap_or_else(|| "gpt-5".into()),
-        AppType::Gemini => provider
-            .configured_model
-            .clone()
-            .or_else(|| provider.model_candidates.first().cloned())
-            .unwrap_or_else(|| "gemini-2.0-flash".into()),
-        _ => provider
-            .configured_model
-            .clone()
-            .unwrap_or_else(|| "model".into()),
+    if let Some(m) = crate::ccs_adapter::routing_profile::client_route_model(app) {
+        return m;
     }
+    // Profile missing: prefer provider-configured model, then refuse inventing dated IDs.
+    provider
+        .configured_model
+        .clone()
+        .or_else(|| provider.model_candidates.first().cloned())
+        .unwrap_or_else(|| crate::ccs_adapter::routing_profile::default_direct_model_guess(app))
 }
 
 pub fn plan_route_attempts(
@@ -165,6 +157,10 @@ pub fn plan_route_attempts(
     mode: DiagnosisMode,
     app_row: &AppRoutingStatusView,
 ) -> Vec<RouteAttemptPlan> {
+    // Unknown / missing profile: do not invent route business requests.
+    if !crate::ccs_adapter::routing_profile::route_profile_verified() {
+        return vec![];
+    }
     let host = match routing.connect_host.as_deref() {
         Some(h) => h,
         None => return vec![],
@@ -256,37 +252,23 @@ pub fn build_route_request(plan: &RouteAttemptPlan) -> Option<BuiltRequest> {
     Some(req)
 }
 
-/// Combine direct + route outcomes into a provider-level status string.
-#[allow(clippy::too_many_arguments)]
-pub fn combine_route_direct_status(
+/// Combine **attempted** route + direct outcomes into a provider-level primary status.
+///
+/// Call only when at least one CCS route business request was actually sent
+/// (`channel == CcsLocalRoute && http_sent`). Route dispositions that never sent a
+/// request (NotRunning / NotCurrentTarget / DirectOnly / Skip / etc.) must NOT be
+/// passed here — the engine keeps `primary = direct_status` in those cases.
+///
+/// `route_target_mismatch` here means mismatch observed **after** a real route send.
+pub fn combine_attempted_route_and_direct(
     route_ok: Option<bool>,
-    route_classification: Option<&str>,
     direct_native_ok: bool,
     direct_variant_ok: bool,
     direct_failed: bool,
-    route_not_running: bool,
-    route_not_applicable: bool,
     route_target_mismatch: bool,
 ) -> String {
     if route_target_mismatch {
         return "CCS_ROUTE_TARGET_MISMATCH".into();
-    }
-    if route_not_running {
-        if direct_native_ok {
-            return "CCS_ROUTE_NOT_RUNNING".into();
-        }
-        return "CCS_ROUTE_NOT_RUNNING".into();
-    }
-    if route_not_applicable {
-        if direct_native_ok {
-            return "CURRENT_CONFIG_OK".into();
-        }
-        if direct_variant_ok {
-            return "DIRECT_PROTOCOL_VARIANT_OK".into();
-        }
-        return route_classification
-            .unwrap_or("CCS_ROUTE_NOT_APPLICABLE")
-            .into();
     }
 
     match route_ok {
@@ -308,16 +290,61 @@ pub fn combine_route_direct_status(
                 "CCS_ROUTE_AND_DIRECT_FAILED".into()
             }
         }
+        // Leader path should always set route_ok after a real send; fall back conservatively.
         None => {
             if direct_native_ok {
                 "CURRENT_CONFIG_OK".into()
             } else if direct_variant_ok {
                 "DIRECT_PROTOCOL_VARIANT_OK".into()
+            } else if direct_failed {
+                // Prefer not inventing a route status when route_ok was never recorded.
+                "UNKNOWN_ERROR".into()
             } else {
-                route_classification.unwrap_or("UNKNOWN_ERROR").to_string()
+                "UNKNOWN_ERROR".into()
             }
         }
     }
+}
+
+/// Backward-compatible wrapper used by older tests and transitional call sites.
+///
+/// When the route was **not** actually attempted, primary status is always
+/// `direct_status` (or a native/variant success shorthand). Route disposition
+/// codes (`CCS_ROUTE_NOT_*`) never become primary.
+#[allow(clippy::too_many_arguments)]
+pub fn combine_route_direct_status(
+    route_ok: Option<bool>,
+    _route_classification: Option<&str>,
+    direct_native_ok: bool,
+    direct_variant_ok: bool,
+    direct_failed: bool,
+    route_not_running: bool,
+    route_not_applicable: bool,
+    route_target_mismatch: bool,
+    direct_status: &str,
+) -> String {
+    // No real route business request → primary is pure direct outcome.
+    // Disposition flags are auxiliary only (surfaced via route_status).
+    if route_not_running || route_not_applicable {
+        return direct_status.to_string();
+    }
+
+    // Target mismatch without a route_ok means pre-send applicability only.
+    if route_target_mismatch && route_ok.is_none() {
+        return direct_status.to_string();
+    }
+
+    if route_ok.is_none() && !route_target_mismatch {
+        return direct_status.to_string();
+    }
+
+    combine_attempted_route_and_direct(
+        route_ok,
+        direct_native_ok,
+        direct_variant_ok,
+        direct_failed,
+        route_target_mismatch,
+    )
 }
 
 pub fn route_side_effect_notice(auto_failover: bool) -> String {
@@ -405,6 +432,9 @@ mod tests {
         let app = routing.apps[0].clone();
         let plans = plan_route_attempts(&p, &routing, DiagnosisMode::Smart, &app);
         assert_eq!(plans.len(), 1);
+        // Profile-bound role alias (not dated Anthropic ID).
+        assert_eq!(plans[0].model, "claude-sonnet-5");
+        assert!(!plans[0].model.contains("20250514"));
         let req = build_route_request(&plans[0]).unwrap();
         let blob = format!("{:?}", req.headers);
         assert!(
@@ -449,21 +479,131 @@ mod tests {
 
     #[test]
     fn combine_route_ok_direct_variant() {
-        let s = combine_route_direct_status(
-            Some(true),
-            Some("GENERATE_OK"),
-            false,
-            true,
-            false,
-            false,
-            false,
-            false,
-        );
+        let s = combine_attempted_route_and_direct(Some(true), false, true, false, false);
         assert_eq!(s, "CCS_ROUTE_OK_DIRECT_VARIANT");
     }
 
     #[test]
     fn combine_route_ok_direct_parse_failed() {
+        let s = combine_attempted_route_and_direct(Some(true), false, false, true, false);
+        assert_eq!(s, "CCS_ROUTE_OK_DIRECT_PARSE_FAILED");
+    }
+
+    #[test]
+    fn not_current_target_plus_network_unreachable_keeps_direct() {
+        let s = combine_route_direct_status(
+            None,
+            Some("CCS_ROUTE_NOT_APPLICABLE"),
+            false,
+            false,
+            true,
+            false,
+            true, // route_not_applicable
+            false,
+            "NETWORK_UNREACHABLE",
+        );
+        assert_eq!(s, "NETWORK_UNREACHABLE");
+    }
+
+    #[test]
+    fn not_current_target_plus_auth_invalid_keeps_direct() {
+        let s = combine_route_direct_status(
+            None,
+            Some("CCS_ROUTE_NOT_APPLICABLE"),
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            "AUTH_INVALID",
+        );
+        assert_eq!(s, "AUTH_INVALID");
+    }
+
+    #[test]
+    fn not_current_target_plus_current_config_ok_keeps_direct() {
+        let s = combine_route_direct_status(
+            None,
+            Some("CCS_ROUTE_NOT_APPLICABLE"),
+            true,
+            false,
+            false,
+            false,
+            true,
+            false,
+            "CURRENT_CONFIG_OK",
+        );
+        assert_eq!(s, "CURRENT_CONFIG_OK");
+    }
+
+    #[test]
+    fn direct_only_skip_never_becomes_primary() {
+        // DirectOnly maps to route_not_applicable via Skip; primary must stay direct.
+        let s = combine_route_direct_status(
+            None,
+            Some("CCS_ROUTE_NOT_APPLICABLE"),
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            "KEY_INVALID",
+        );
+        assert_eq!(s, "KEY_INVALID");
+    }
+
+    #[test]
+    fn not_running_plus_direct_success_keeps_direct() {
+        let s = combine_route_direct_status(
+            None,
+            Some("CCS_ROUTE_NOT_RUNNING"),
+            true,
+            false,
+            false,
+            true, // route_not_running
+            false,
+            false,
+            "CURRENT_CONFIG_OK",
+        );
+        assert_eq!(s, "CURRENT_CONFIG_OK");
+    }
+
+    #[test]
+    fn not_running_plus_direct_failure_keeps_direct() {
+        let s = combine_route_direct_status(
+            None,
+            Some("CCS_ROUTE_NOT_RUNNING"),
+            false,
+            false,
+            true,
+            true,
+            false,
+            false,
+            "NETWORK_UNREACHABLE",
+        );
+        assert_eq!(s, "NETWORK_UNREACHABLE");
+    }
+
+    #[test]
+    fn pre_send_target_mismatch_keeps_direct() {
+        let s = combine_route_direct_status(
+            None,
+            Some("CCS_ROUTE_TARGET_MISMATCH"),
+            false,
+            false,
+            true,
+            false,
+            false,
+            true, // mismatch without route_ok → disposition only
+            "MODEL_NOT_FOUND",
+        );
+        assert_eq!(s, "MODEL_NOT_FOUND");
+    }
+
+    #[test]
+    fn attempted_route_ok_with_direct_failure_combines() {
         let s = combine_route_direct_status(
             Some(true),
             Some("GENERATE_OK"),
@@ -473,8 +613,21 @@ mod tests {
             false,
             false,
             false,
+            "NETWORK_UNREACHABLE",
         );
         assert_eq!(s, "CCS_ROUTE_OK_DIRECT_PARSE_FAILED");
+    }
+
+    #[test]
+    fn attempted_route_failed_with_direct_ok_combines() {
+        let s = combine_attempted_route_and_direct(Some(false), true, false, false, false);
+        assert_eq!(s, "CCS_ROUTE_FAILED_DIRECT_OK");
+    }
+
+    #[test]
+    fn attempted_route_and_direct_both_failed() {
+        let s = combine_attempted_route_and_direct(Some(false), false, false, true, false);
+        assert_eq!(s, "CCS_ROUTE_AND_DIRECT_FAILED");
     }
 
     #[test]

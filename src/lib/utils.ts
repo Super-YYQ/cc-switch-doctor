@@ -254,6 +254,125 @@ export function confidenceLabel(c: string): string {
   return c;
 }
 
+/** Primary badge code: prefer primaryOutcome; never invent route disposition as primary. */
+export function primaryStatusCode(summary: {
+  status: string;
+  primaryOutcome?: string | null;
+}): string {
+  return summary.primaryOutcome || summary.status;
+}
+
+export type RouteDisposition =
+  | "not_requested"
+  | "not_configured"
+  | "not_running"
+  | "not_current_target"
+  | "unsupported_app"
+  | "blocked_non_loopback"
+  | "attempted";
+
+/** Neutral Chinese copy for route disposition (auxiliary only — never primary badge). */
+export function routeDispositionLabel(
+  disposition?: string | null,
+  routeStatus?: string | null,
+): { title: string; detail: string; kind: StatusKind } {
+  const d = (disposition || "").toLowerCase();
+  if (d === "attempted" || routeStatus === "CCS_ROUTE_OK") {
+    return {
+      title: "已验证",
+      detail: routeStatus ? statusBadge(routeStatus).zh : "CCS 路由业务请求已发送",
+      kind: routeStatus ? statusBadge(routeStatus).kind : "ok",
+    };
+  }
+  if (d === "not_running" || routeStatus === "CCS_ROUTE_NOT_RUNNING") {
+    return {
+      title: "未验证",
+      detail: "CCS 路由已配置但未运行",
+      kind: "skip",
+    };
+  }
+  if (d === "not_current_target") {
+    return {
+      title: "未验证",
+      detail: "该 Provider 不是当前 CCS 路由目标",
+      kind: "skip",
+    };
+  }
+  if (d === "not_requested") {
+    return {
+      title: "未请求",
+      detail: "本次未执行 CCS 路由验证（例如仅直连模式）",
+      kind: "skip",
+    };
+  }
+  if (d === "blocked_non_loopback") {
+    return {
+      title: "未验证",
+      detail: "监听地址非 loopback，已禁止路由探测",
+      kind: "skip",
+    };
+  }
+  if (d === "unsupported_app") {
+    return {
+      title: "未验证",
+      detail: "当前应用类型不支持路由协议探测",
+      kind: "skip",
+    };
+  }
+  if (d === "not_configured" || routeStatus === "CCS_ROUTE_NOT_APPLICABLE") {
+    return {
+      title: "未验证",
+      detail: "CCS 路由配置不可用或不适用",
+      kind: "skip",
+    };
+  }
+  if (routeStatus) {
+    const b = statusBadge(routeStatus);
+    return { title: b.zh, detail: routeStatus, kind: b.kind };
+  }
+  return { title: "—", detail: "无路由信息", kind: "skip" };
+}
+
+/** Group attempt evidence lines by URL/protocol for default (non-debug) display. */
+export function groupAttemptsByCanonical(
+  attempts: {
+    url: string;
+    protocol: string;
+    stream?: boolean;
+    classification: string;
+    httpSent?: boolean;
+    reusedFromCache?: boolean;
+    ok?: boolean;
+  }[],
+): { key: string; label: string; realSends: number; cacheHits: number; finalStatus: string }[] {
+  const map = new Map<
+    string,
+    { label: string; realSends: number; cacheHits: number; finalStatus: string }
+  >();
+  for (const a of attempts) {
+    const path = (() => {
+      try {
+        return new URL(a.url).pathname || a.url;
+      } catch {
+        return a.url;
+      }
+    })();
+    const key = `${path}|${a.protocol}|${a.stream ? "stream" : "post"}`;
+    const label = `${path} · ${a.protocol}${a.stream ? " · stream" : ""}`;
+    const prev = map.get(key) || {
+      label,
+      realSends: 0,
+      cacheHits: 0,
+      finalStatus: a.classification,
+    };
+    if (a.httpSent) prev.realSends += 1;
+    if (a.reusedFromCache) prev.cacheHits += 1;
+    prev.finalStatus = a.classification;
+    map.set(key, prev);
+  }
+  return [...map.entries()].map(([key, v]) => ({ key, ...v }));
+}
+
 export function schemaKind(status?: string | null): StatusKind {
   if (status === "verified") return "ok";
   if (status === "compatible") return "warn";
