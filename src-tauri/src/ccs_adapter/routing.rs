@@ -404,14 +404,12 @@ pub async fn discover_routing_status(conn: &Connection) -> RoutingStatusView {
         view.server_running = running || health;
         if let Some(s) = snap {
             apply_status_snapshot(&mut view, &s);
-        } else if !health {
-            if view.global_enabled {
-                view.warning = Some(
-                    view.warning
-                        .clone()
-                        .unwrap_or_else(|| "CCS 路由已配置但本地服务未响应 /health".into()),
-                );
-            }
+        } else if !health && view.global_enabled {
+            view.warning = Some(
+                view.warning
+                    .clone()
+                    .unwrap_or_else(|| "CCS 路由已配置但本地服务未响应 /health".into()),
+            );
         }
     }
     view

@@ -1,8 +1,13 @@
 use super::classifier::{best_classification, final_status_from_attempts};
 use super::planner::{plan_attempts, DiagnosisMode, PlannedAttempt};
+use super::route_planner::{
+    build_route_request, combine_route_direct_status, plan_route_attempts, route_applicable,
+    route_side_effect_notice, RouteApplicability, VerifyMode, ROUTE_SEND_BUDGET_PER_APP,
+};
 use super::session_budget::{
     cache_key_from_built, key_fingerprint, provider_send_budget, OriginKey, SessionBudget,
 };
+use crate::ccs_adapter::routing::RoutingStatusView;
 use crate::ccs_adapter::{NormalizedProvider, ProtocolKind};
 use crate::protocols::anthropic::build_anthropic_request;
 use crate::protocols::gemini::build_gemini_request_with_auth;
@@ -11,13 +16,14 @@ use crate::protocols::openai_chat::build_chat_request;
 use crate::protocols::openai_responses::build_responses_request;
 use crate::protocols::types::AuthScheme;
 use crate::protocols::types::{
-    default_timeout, is_max_completion_tokens_unsupported, AttemptResult, RequestPurpose,
-    TokenLimitField,
+    default_timeout, is_max_completion_tokens_unsupported, AttemptResult, DiagnosisChannel,
+    RequestPurpose, TokenLimitField,
 };
 use crate::security::origin::SameOriginPolicy;
 use crate::security::redact::SecretRedactor;
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
@@ -27,6 +33,9 @@ pub struct StartDiagnosisRequest {
     pub opaque_ids: Vec<String>,
     pub mode: DiagnosisMode,
     pub concurrency: u32,
+    /// auto | direct_only | direct_and_route
+    #[serde(default)]
+    pub verify_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +103,12 @@ pub struct ProviderDiagnosisSummary {
     pub evidence: Vec<String>,
     pub attempts: Vec<AttemptResult>,
     pub confidence: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct_status: Option<String>,
+    #[serde(default)]
+    pub route_side_effect_notice: Option<String>,
 }
 
 pub async fn run_diagnosis(
@@ -103,6 +118,8 @@ pub async fn run_diagnosis(
     concurrency: u32,
     cancel: CancellationToken,
     emit: impl Fn(DiagnosisEvent) + Send + Sync + 'static,
+    routing: Option<RoutingStatusView>,
+    verify_mode: VerifyMode,
 ) {
     let estimated: usize = providers.iter().map(|p| plan_attempts(p, mode).len()).sum();
     emit(DiagnosisEvent::RunStarted {
@@ -136,6 +153,9 @@ pub async fn run_diagnosis(
                     evidence: vec![],
                     attempts: vec![],
                     confidence: "low".into(),
+                    route_status: None,
+                    direct_status: None,
+                    route_side_effect_notice: None,
                 }],
             });
             return;
@@ -143,9 +163,13 @@ pub async fn run_diagnosis(
     };
 
     let session_budget = Arc::new(SessionBudget::new());
+    // Apps that already consumed a real route send this session (dedupe multi-select)
+    let route_apps_sent: Arc<std::sync::Mutex<HashSet<String>>> =
+        Arc::new(std::sync::Mutex::new(HashSet::new()));
     let concurrency = concurrency.clamp(1, 3) as usize;
     let mut summaries = Vec::new();
     let mut chunks = providers;
+    let routing = Arc::new(routing);
 
     if concurrency == 1 {
         for p in chunks {
@@ -167,6 +191,9 @@ pub async fn run_diagnosis(
                 &cancel,
                 &emit,
                 Arc::clone(&session_budget),
+                routing.as_ref().clone(),
+                verify_mode,
+                Arc::clone(&route_apps_sent),
             )
             .await;
             summaries.push(s);
@@ -182,7 +209,23 @@ pub async fn run_diagnosis(
                 let cancel = cancel2.clone();
                 let emit_ref = &emit;
                 let budget = Arc::clone(&session_budget);
-                async move { diagnose_one(exec, &run_id, p, mode, &cancel, emit_ref, budget).await }
+                let routing = routing.as_ref().clone();
+                let route_apps = Arc::clone(&route_apps_sent);
+                async move {
+                    diagnose_one(
+                        exec,
+                        &run_id,
+                        p,
+                        mode,
+                        &cancel,
+                        emit_ref,
+                        budget,
+                        routing,
+                        verify_mode,
+                        route_apps,
+                    )
+                    .await
+                }
             })
             .buffer_unordered(concurrency)
             .collect()
@@ -198,6 +241,7 @@ pub async fn run_diagnosis(
     emit(DiagnosisEvent::RunFinished { run_id, summaries });
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn diagnose_one(
     exec: &HttpExecutor,
     run_id: &str,
@@ -206,6 +250,9 @@ async fn diagnose_one(
     cancel: &CancellationToken,
     emit: &impl Fn(DiagnosisEvent),
     session_budget: Arc<SessionBudget>,
+    routing: Option<RoutingStatusView>,
+    verify_mode: VerifyMode,
+    route_apps_sent: Arc<std::sync::Mutex<HashSet<String>>>,
 ) -> ProviderDiagnosisSummary {
     let plans = plan_attempts(&provider, mode);
     emit(DiagnosisEvent::ProviderStarted {
@@ -238,6 +285,135 @@ async fn diagnose_one(
     let mut provider_real_sends: usize = 0;
     let provider_budget = provider_send_budget(mode);
     let model_is_guessed = provider.configured_model.is_none();
+
+    // --- CCS local route channel ---
+    let mut route_ok: Option<bool> = None;
+    let mut route_classification: Option<String> = None;
+    let mut route_not_running = false;
+    let mut route_not_applicable = false;
+    let mut route_target_mismatch = false;
+    let mut route_notice: Option<String> = None;
+    let route_index_base = 10_000usize;
+
+    if let Some(ref routing_view) = routing {
+        match route_applicable(&provider, routing_view, verify_mode) {
+            RouteApplicability::Yes(app_row) => {
+                let app_key = provider.app_type.as_str().to_string();
+                let already = route_apps_sent
+                    .lock()
+                    .map(|g| g.contains(&app_key))
+                    .unwrap_or(false);
+                if already {
+                    route_not_applicable = true;
+                    route_classification = Some("CCS_ROUTE_NOT_APPLICABLE".into());
+                } else {
+                    let rplans = plan_route_attempts(&provider, routing_view, mode, &app_row);
+                    let mut sent = 0usize;
+                    for (ri, rplan) in rplans.iter().enumerate() {
+                        if cancel.is_cancelled() || sent >= ROUTE_SEND_BUDGET_PER_APP {
+                            break;
+                        }
+                        let Some(built) = build_route_request(rplan) else {
+                            continue;
+                        };
+                        let origin_policy = SameOriginPolicy::parse_url(&rplan.base_url).unwrap_or(
+                            SameOriginPolicy {
+                                scheme: "http".into(),
+                                host: "127.0.0.1".into(),
+                                port: routing_view.listen_port,
+                            },
+                        );
+                        let idx = route_index_base + ri;
+                        emit(DiagnosisEvent::AttemptStarted {
+                            run_id: run_id.to_string(),
+                            opaque_id: provider.opaque_id.clone(),
+                            index: idx,
+                            label: rplan.label.clone(),
+                            url: crate::security::sanitize_url_for_display(&built.url),
+                            protocol: rplan.protocol.as_str().to_string(),
+                            model: rplan.model.clone(),
+                        });
+                        let mut result = exec
+                            .execute(
+                                built,
+                                &origin_policy,
+                                &redactor,
+                                cancel,
+                                default_timeout(mode == DiagnosisMode::Deep),
+                            )
+                            .await;
+                        result.channel = DiagnosisChannel::CcsLocalRoute;
+                        result.requested_protocol = Some(rplan.protocol);
+                        if result.http_sent {
+                            sent += 1;
+                        }
+                        if result.ok {
+                            route_ok = Some(true);
+                            route_notice = Some(route_side_effect_notice(rplan.auto_failover));
+                            if rplan.auto_failover {
+                                result.suggestion_note = Some(route_side_effect_notice(true));
+                            }
+                            if let Some(exp) = &rplan.expected_provider_id {
+                                if let Some(app) = routing_view
+                                    .apps
+                                    .iter()
+                                    .find(|a| a.app_type == provider.app_type.as_str())
+                                {
+                                    if let Some(act) = &app.active_provider_id {
+                                        if act != exp {
+                                            route_target_mismatch = true;
+                                            result.classification =
+                                                "CCS_ROUTE_TARGET_MISMATCH".into();
+                                            result.suggestion_note = Some(
+                                                "CCS 路由请求成功，但实际由另一 Provider 处理；本结果验证的是当前路由链，不代表所选 Provider 已通过。".into(),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        } else if route_ok.is_none() {
+                            route_ok = Some(false);
+                        }
+                        route_classification = Some(result.classification.clone());
+                        emit(DiagnosisEvent::AttemptFinished {
+                            run_id: run_id.to_string(),
+                            opaque_id: provider.opaque_id.clone(),
+                            index: idx,
+                            result: result.clone(),
+                        });
+                        attempts.push(result);
+                    }
+                    if sent > 0 {
+                        if let Ok(mut g) = route_apps_sent.lock() {
+                            g.insert(app_key);
+                        }
+                    }
+                    if route_notice.is_none() && app_row.auto_failover_enabled {
+                        route_notice = Some(route_side_effect_notice(true));
+                    }
+                }
+            }
+            RouteApplicability::NotRunning => {
+                route_not_running = true;
+                route_classification = Some("CCS_ROUTE_NOT_RUNNING".into());
+            }
+            RouteApplicability::NotCurrentTarget => {
+                route_not_applicable = true;
+                route_classification = Some("CCS_ROUTE_NOT_APPLICABLE".into());
+            }
+            RouteApplicability::TargetMismatch { .. } => {
+                route_target_mismatch = true;
+                route_classification = Some("CCS_ROUTE_TARGET_MISMATCH".into());
+            }
+            RouteApplicability::Skip(_msg) => {
+                route_not_applicable = true;
+                route_classification = Some("CCS_ROUTE_NOT_APPLICABLE".into());
+            }
+        }
+    } else if verify_mode == VerifyMode::DirectAndRoute {
+        route_not_running = true;
+        route_classification = Some("CCS_ROUTE_NOT_RUNNING".into());
+    }
 
     for (index, plan) in plans.iter().enumerate() {
         if cancel.is_cancelled() || stop_all {
@@ -555,7 +731,21 @@ async fn diagnose_one(
         }
     };
 
-    let mut status = if provider.skip_reason.is_some() {
+    let direct_native_ok = current_ok;
+    let direct_variant_ok = attempts.iter().any(|a| {
+        a.ok && a.channel == DiagnosisChannel::DirectUpstream
+            && matches!(
+                a.classification.as_str(),
+                "RESPONSE_PROTOCOL_VARIANT_OK"
+                    | "DIRECT_PROTOCOL_VARIANT_OK"
+                    | "PROTOCOL_FALLBACK_OK"
+            )
+    });
+    let direct_failed = attempts
+        .iter()
+        .any(|a| a.channel == DiagnosisChannel::DirectUpstream && !a.ok && a.http_sent);
+
+    let mut direct_status = if provider.skip_reason.is_some() {
         "MANAGED_AUTH_SKIPPED".into()
     } else {
         final_status_from_attempts(
@@ -568,16 +758,38 @@ async fn diagnose_one(
             needs_local,
         )
     };
-    if model_is_guessed && any_ok && !current_ok && status != "LOCAL_ROUTING_REQUIRED" {
-        // Prefer MODEL_GUESS_OK when only a guessed model worked
-        if status == "CURRENT_CONFIG_OK"
-            || status == "MODEL_VARIANT_OK"
-            || status == "AUTH_VARIANT_OK"
+    if model_is_guessed && any_ok && !current_ok && direct_status != "LOCAL_ROUTING_REQUIRED" {
+        if direct_status == "CURRENT_CONFIG_OK"
+            || direct_status == "MODEL_VARIANT_OK"
+            || direct_status == "AUTH_VARIANT_OK"
             || (!protocol_changed && !url_changed)
         {
-            status = "MODEL_GUESS_OK".into();
+            direct_status = "MODEL_GUESS_OK".into();
         }
     }
+
+    let route_status_str = route_classification.clone();
+    let status = if provider.skip_reason.is_some() {
+        "MANAGED_AUTH_SKIPPED".into()
+    } else if routing.is_some()
+        || verify_mode == VerifyMode::DirectAndRoute
+        || route_ok.is_some()
+        || route_not_running
+        || route_target_mismatch
+    {
+        combine_route_direct_status(
+            route_ok,
+            route_classification.as_deref(),
+            direct_native_ok,
+            direct_variant_ok,
+            direct_failed,
+            route_not_running,
+            route_not_applicable,
+            route_target_mismatch,
+        )
+    } else {
+        direct_status.clone()
+    };
 
     let mut suggestion = build_suggestion(
         &provider,
@@ -587,6 +799,20 @@ async fn diagnose_one(
         needs_local,
         &status,
     );
+    if status == "CCS_ROUTE_OK_DIRECT_VARIANT"
+        || status == "CCS_ROUTE_OK_DIRECT_PARSE_FAILED"
+        || status == "CCS_ROUTE_OK"
+        || status == "CCS_ROUTE_OK_DIRECT_NATIVE_OK"
+    {
+        suggestion = "无需修改当前 CC Switch 配置。上游协议与客户端协议可能不同，当前由 CCS 路由完成转换；结果表示当前 CCS 路由链可用。".into();
+        if let Some(n) = &route_notice {
+            suggestion = format!("{suggestion} {n}");
+        }
+    } else if status == "CCS_ROUTE_TARGET_MISMATCH" {
+        suggestion = "CCS 路由请求成功，但实际由另一 Provider 处理；本结果验证的是当前路由链，不代表所选 Provider 已通过。".into();
+    } else if status == "CCS_ROUTE_NOT_RUNNING" {
+        suggestion = "CCS 路由已配置但未运行；已仅执行上游直连诊断。".into();
+    }
     if model_is_guessed && any_ok {
         suggestion = format!(
             "{suggestion} 使用 Doctor 推测模型测试成功，但不能证明 CC Switch 当前模型配置可用。"
@@ -683,6 +909,9 @@ async fn diagnose_one(
         evidence,
         attempts,
         confidence,
+        route_status: route_status_str,
+        direct_status: Some(direct_status),
+        route_side_effect_notice: route_notice,
     };
 
     emit(DiagnosisEvent::ProviderFinished {

@@ -1,0 +1,489 @@
+//! Build CCS local-route client-protocol attempts.
+//!
+//! Route channel sends the *client* protocol to the already-running CCS loopback
+//! proxy using the CCS placeholder credential — never the provider real key.
+
+use crate::ccs_adapter::routing::{
+    route_base_url, AppRoutingStatusView, RoutingStatusView, CCS_PROXY_PLACEHOLDER_TOKEN,
+};
+use crate::ccs_adapter::{AppType, NormalizedProvider, ProtocolKind};
+use crate::diagnostics::planner::DiagnosisMode;
+use crate::protocols::anthropic::build_anthropic_request;
+use crate::protocols::gemini::build_gemini_request_with_auth;
+use crate::protocols::openai_chat::build_chat_request;
+use crate::protocols::openai_responses::build_responses_request;
+use crate::protocols::types::{AuthScheme, BuiltRequest, DiagnosisChannel, TokenLimitField};
+
+/// Max real CCS route HTTP sends per app per diagnosis session.
+pub const ROUTE_SEND_BUDGET_PER_APP: usize = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VerifyMode {
+    #[default]
+    Auto,
+    DirectOnly,
+    DirectAndRoute,
+}
+
+impl VerifyMode {
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "direct" | "direct_only" | "direct-only" => Self::DirectOnly,
+            "direct_and_route" | "direct+route" | "both" => Self::DirectAndRoute,
+            _ => Self::Auto,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RouteAttemptPlan {
+    pub app_type: AppType,
+    pub base_url: String,
+    pub protocol: ProtocolKind,
+    pub model: String,
+    pub stream: bool,
+    pub label: String,
+    pub expected_provider_id: Option<String>,
+    pub expected_provider_name: Option<String>,
+    pub auto_failover: bool,
+}
+
+/// Whether route verification applies for this provider under the given mode/status.
+pub fn route_applicable(
+    provider: &NormalizedProvider,
+    routing: &RoutingStatusView,
+    mode: VerifyMode,
+) -> RouteApplicability {
+    if mode == VerifyMode::DirectOnly {
+        return RouteApplicability::Skip("验证方式：仅直连".into());
+    }
+    if !routing.config_detected {
+        return RouteApplicability::Skip("路由状态不可用".into());
+    }
+    if routing.connect_host.is_none() || routing.listen_port.is_none() {
+        return RouteApplicability::Skip("监听地址非 loopback 或端口未知".into());
+    }
+    if !routing.server_running && !routing.health_reachable {
+        if mode == VerifyMode::DirectAndRoute {
+            return RouteApplicability::NotRunning;
+        }
+        // Auto: if route not running, skip silently to direct-only
+        return RouteApplicability::Skip("CCS 路由未运行".into());
+    }
+
+    let app_row = routing
+        .apps
+        .iter()
+        .find(|a| a.app_type == provider.app_type.as_str());
+    let Some(app) = app_row else {
+        return RouteApplicability::Skip(format!(
+            "应用 {} 无 CCS 路由配置",
+            provider.app_type.label_zh()
+        ));
+    };
+    if !app.enabled && !routing.global_enabled {
+        return RouteApplicability::Skip("应用路由未开启".into());
+    }
+    if !app.enabled {
+        // global may be on but this app not taken over
+        return RouteApplicability::Skip(format!("{} 路由未接管", provider.app_type.label_zh()));
+    }
+
+    // Only current route target may own route results
+    if !provider.is_current {
+        return RouteApplicability::NotCurrentTarget;
+    }
+    if let Some(active_id) = &app.active_provider_id {
+        if active_id != &provider.source_id {
+            return RouteApplicability::TargetMismatch {
+                expected: provider.source_id.clone(),
+                actual: active_id.clone(),
+                actual_name: app.active_provider_name.clone(),
+            };
+        }
+    }
+
+    if mode == VerifyMode::Auto && !app.enabled {
+        return RouteApplicability::Skip("自动模式：应用路由关闭".into());
+    }
+
+    RouteApplicability::Yes(app.clone())
+}
+
+#[derive(Debug, Clone)]
+pub enum RouteApplicability {
+    Yes(AppRoutingStatusView),
+    Skip(String),
+    NotRunning,
+    NotCurrentTarget,
+    TargetMismatch {
+        expected: String,
+        actual: String,
+        actual_name: Option<String>,
+    },
+}
+
+/// Client protocol for route channel (NOT upstream provider protocol).
+pub fn client_protocol_for_app(app: AppType) -> ProtocolKind {
+    match app {
+        AppType::Claude | AppType::ClaudeDesktop => ProtocolKind::AnthropicMessages,
+        AppType::Codex => ProtocolKind::OpenAiResponses,
+        AppType::Gemini => ProtocolKind::GeminiNative,
+        // Only stable entries; unknown apps not route-tested
+        _ => ProtocolKind::Unknown,
+    }
+}
+
+/// Client-visible model for route tests (role alias when possible).
+pub fn client_model_for_app(app: AppType, provider: &NormalizedProvider) -> String {
+    match app {
+        AppType::Claude | AppType::ClaudeDesktop => {
+            // Prefer stable client role aliases used by Claude Code
+            "claude-sonnet-4-20250514".into()
+        }
+        AppType::Codex => provider
+            .configured_model
+            .clone()
+            .or_else(|| provider.model_candidates.first().cloned())
+            .unwrap_or_else(|| "gpt-5".into()),
+        AppType::Gemini => provider
+            .configured_model
+            .clone()
+            .or_else(|| provider.model_candidates.first().cloned())
+            .unwrap_or_else(|| "gemini-2.0-flash".into()),
+        _ => provider
+            .configured_model
+            .clone()
+            .unwrap_or_else(|| "model".into()),
+    }
+}
+
+pub fn plan_route_attempts(
+    provider: &NormalizedProvider,
+    routing: &RoutingStatusView,
+    mode: DiagnosisMode,
+    app_row: &AppRoutingStatusView,
+) -> Vec<RouteAttemptPlan> {
+    let host = match routing.connect_host.as_deref() {
+        Some(h) => h,
+        None => return vec![],
+    };
+    let port = match routing.listen_port {
+        Some(p) => p,
+        None => return vec![],
+    };
+    let base = route_base_url(host, port);
+    let protocol = client_protocol_for_app(provider.app_type);
+    if protocol == ProtocolKind::Unknown {
+        return vec![];
+    }
+    let model = client_model_for_app(provider.app_type, provider);
+
+    let mut plans = vec![RouteAttemptPlan {
+        app_type: provider.app_type,
+        base_url: base.clone(),
+        protocol,
+        model: model.clone(),
+        stream: false,
+        label: format!("CCS 路由链 · {}", provider.app_type.label_zh()),
+        expected_provider_id: Some(provider.source_id.clone()),
+        expected_provider_name: Some(provider.display_name.clone()),
+        auto_failover: app_row.auto_failover_enabled,
+    }];
+
+    // Deep: one streaming route probe (budget 2 total)
+    if mode == DiagnosisMode::Deep {
+        plans.push(RouteAttemptPlan {
+            app_type: provider.app_type,
+            base_url: base,
+            protocol,
+            model,
+            stream: true,
+            label: format!("CCS 路由链 Streaming · {}", provider.app_type.label_zh()),
+            expected_provider_id: Some(provider.source_id.clone()),
+            expected_provider_name: Some(provider.display_name.clone()),
+            auto_failover: app_row.auto_failover_enabled,
+        });
+    }
+
+    plans.truncate(ROUTE_SEND_BUDGET_PER_APP);
+    plans
+}
+
+/// Build a route request using placeholder token only.
+pub fn build_route_request(plan: &RouteAttemptPlan) -> Option<BuiltRequest> {
+    let key = CCS_PROXY_PLACEHOLDER_TOKEN;
+    let req = match plan.protocol {
+        ProtocolKind::AnthropicMessages => {
+            // Claude client uses x-api-key style against local proxy
+            build_anthropic_request(
+                &plan.base_url,
+                &plan.model,
+                key,
+                plan.stream,
+                false,
+                false, // x-api-key not bearer for anthropic client path
+                None,
+            )
+        }
+        ProtocolKind::OpenAiChat => build_chat_request(
+            &plan.base_url,
+            &plan.model,
+            key,
+            plan.stream,
+            false,
+            None,
+            TokenLimitField::MaxCompletionTokens,
+        ),
+        ProtocolKind::OpenAiResponses => {
+            build_responses_request(&plan.base_url, &plan.model, key, plan.stream, false, None)
+        }
+        ProtocolKind::GeminiNative => build_gemini_request_with_auth(
+            &plan.base_url,
+            &plan.model,
+            key,
+            plan.stream,
+            false,
+            None,
+            AuthScheme::XGoogApiKey,
+        ),
+        ProtocolKind::Unknown => return None,
+    };
+    // Ensure Authorization / key never carries a real provider secret — already placeholder.
+    // Mark purpose already set by builders.
+    let _ = DiagnosisChannel::CcsLocalRoute;
+    Some(req)
+}
+
+/// Combine direct + route outcomes into a provider-level status string.
+#[allow(clippy::too_many_arguments)]
+pub fn combine_route_direct_status(
+    route_ok: Option<bool>,
+    route_classification: Option<&str>,
+    direct_native_ok: bool,
+    direct_variant_ok: bool,
+    direct_failed: bool,
+    route_not_running: bool,
+    route_not_applicable: bool,
+    route_target_mismatch: bool,
+) -> String {
+    if route_target_mismatch {
+        return "CCS_ROUTE_TARGET_MISMATCH".into();
+    }
+    if route_not_running {
+        if direct_native_ok {
+            return "CCS_ROUTE_NOT_RUNNING".into();
+        }
+        return "CCS_ROUTE_NOT_RUNNING".into();
+    }
+    if route_not_applicable {
+        if direct_native_ok {
+            return "CURRENT_CONFIG_OK".into();
+        }
+        if direct_variant_ok {
+            return "DIRECT_PROTOCOL_VARIANT_OK".into();
+        }
+        return route_classification
+            .unwrap_or("CCS_ROUTE_NOT_APPLICABLE")
+            .into();
+    }
+
+    match route_ok {
+        Some(true) => {
+            if direct_native_ok {
+                "CCS_ROUTE_OK_DIRECT_NATIVE_OK".into()
+            } else if direct_variant_ok {
+                "CCS_ROUTE_OK_DIRECT_VARIANT".into()
+            } else if direct_failed {
+                "CCS_ROUTE_OK_DIRECT_PARSE_FAILED".into()
+            } else {
+                "CCS_ROUTE_OK".into()
+            }
+        }
+        Some(false) => {
+            if direct_native_ok || direct_variant_ok {
+                "CCS_ROUTE_FAILED_DIRECT_OK".into()
+            } else {
+                "CCS_ROUTE_AND_DIRECT_FAILED".into()
+            }
+        }
+        None => {
+            if direct_native_ok {
+                "CURRENT_CONFIG_OK".into()
+            } else if direct_variant_ok {
+                "DIRECT_PROTOCOL_VARIANT_OK".into()
+            } else {
+                route_classification.unwrap_or("UNKNOWN_ERROR").to_string()
+            }
+        }
+    }
+}
+
+pub fn route_side_effect_notice(auto_failover: bool) -> String {
+    let base = "本工具不会修改或切换 CCS 路由配置；但真实路由验证会被 CCS 视为一次正常请求，可能写入日志/统计，并可能触发已配置的重试或故障转移。";
+    if auto_failover {
+        format!("{base} 当前开启自动故障转移：结果验证的是当前 CCS 路由链，不代表固定 Provider。")
+    } else {
+        base.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ccs_adapter::routing::RoutingStatusView;
+    use crate::ccs_adapter::{AuthKind, ProviderKind};
+    use secrecy::SecretString;
+
+    fn sample_provider(is_current: bool, source_id: &str) -> NormalizedProvider {
+        NormalizedProvider {
+            opaque_id: "op1".into(),
+            source_id: source_id.into(),
+            app_type: AppType::Claude,
+            display_name: "Relay".into(),
+            category: None,
+            auth_kind: AuthKind::ApiKey,
+            provider_kind: ProviderKind::ThirdPartyApi,
+            base_url: "https://api.example.com/v1".into(),
+            api_key: SecretString::from("sk-real-secret-key-value"),
+            configured_protocol: Some(ProtocolKind::OpenAiResponses),
+            configured_model: Some("upstream-model".into()),
+            model_candidates: vec![],
+            endpoint_candidates: vec![],
+            custom_user_agent: None,
+            needs_local_routing: None,
+            is_current,
+            skip_reason: None,
+            masked_key: "sk-rea…alue".into(),
+            safe_base_url: "https://api.example.com/v1".into(),
+            website_url: None,
+            api_format_hint: None,
+            preferred_auth: None,
+            credential_source: None,
+        }
+    }
+
+    fn sample_routing(running: bool, active: &str) -> RoutingStatusView {
+        RoutingStatusView {
+            config_detected: true,
+            global_enabled: true,
+            listen_address: Some("127.0.0.1".into()),
+            listen_port: Some(15721),
+            health_reachable: running,
+            server_running: running,
+            failover_count: Some(0),
+            apps: vec![AppRoutingStatusView {
+                app_type: "claude".into(),
+                app_label: "Claude Code".into(),
+                enabled: true,
+                auto_failover_enabled: false,
+                max_retries: Some(3),
+                streaming_first_byte_timeout: Some(60),
+                streaming_idle_timeout: Some(120),
+                non_streaming_timeout: Some(600),
+                active_provider_id: Some(active.into()),
+                active_provider_name: Some("Relay".into()),
+            }],
+            warning: None,
+            connect_host: Some("127.0.0.1".into()),
+        }
+    }
+
+    #[test]
+    fn client_protocol_is_anthropic_for_claude_even_if_upstream_responses() {
+        assert_eq!(
+            client_protocol_for_app(AppType::Claude),
+            ProtocolKind::AnthropicMessages
+        );
+    }
+
+    #[test]
+    fn route_request_uses_placeholder_not_real_key() {
+        let p = sample_provider(true, "p1");
+        let routing = sample_routing(true, "p1");
+        let app = routing.apps[0].clone();
+        let plans = plan_route_attempts(&p, &routing, DiagnosisMode::Smart, &app);
+        assert_eq!(plans.len(), 1);
+        let req = build_route_request(&plans[0]).unwrap();
+        let blob = format!("{:?}", req.headers);
+        assert!(
+            blob.contains(CCS_PROXY_PLACEHOLDER_TOKEN) || req.url.contains("key=") || {
+                // x-api-key header
+                req.headers
+                    .values()
+                    .any(|v| v == CCS_PROXY_PLACEHOLDER_TOKEN)
+            }
+        );
+        assert!(!blob.contains("sk-real-secret-key-value"));
+        assert!(!req.url.contains("sk-real-secret-key-value"));
+        assert!(req.url.contains("127.0.0.1"));
+        assert!(req.url.contains("/v1/messages") || req.url.contains("/messages"));
+        assert_eq!(req.protocol, ProtocolKind::AnthropicMessages);
+    }
+
+    #[test]
+    fn non_current_provider_not_applicable() {
+        let p = sample_provider(false, "other");
+        let routing = sample_routing(true, "p1");
+        match route_applicable(&p, &routing, VerifyMode::Auto) {
+            RouteApplicability::NotCurrentTarget => {}
+            other => panic!("expected NotCurrentTarget, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn target_mismatch_detected() {
+        let p = sample_provider(true, "p-selected");
+        let routing = sample_routing(true, "p-other");
+        match route_applicable(&p, &routing, VerifyMode::DirectAndRoute) {
+            RouteApplicability::TargetMismatch {
+                expected, actual, ..
+            } => {
+                assert_eq!(expected, "p-selected");
+                assert_eq!(actual, "p-other");
+            }
+            other => panic!("expected mismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn combine_route_ok_direct_variant() {
+        let s = combine_route_direct_status(
+            Some(true),
+            Some("GENERATE_OK"),
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert_eq!(s, "CCS_ROUTE_OK_DIRECT_VARIANT");
+    }
+
+    #[test]
+    fn combine_route_ok_direct_parse_failed() {
+        let s = combine_route_direct_status(
+            Some(true),
+            Some("GENERATE_OK"),
+            false,
+            false,
+            true,
+            false,
+            false,
+            false,
+        );
+        assert_eq!(s, "CCS_ROUTE_OK_DIRECT_PARSE_FAILED");
+    }
+
+    #[test]
+    fn deep_mode_plans_two_route_attempts() {
+        let p = sample_provider(true, "p1");
+        let routing = sample_routing(true, "p1");
+        let app = routing.apps[0].clone();
+        let plans = plan_route_attempts(&p, &routing, DiagnosisMode::Deep, &app);
+        assert_eq!(plans.len(), 2);
+        assert!(plans[1].stream);
+    }
+}
