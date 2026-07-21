@@ -135,28 +135,20 @@ pub fn client_protocol_for_app(app: AppType) -> ProtocolKind {
     }
 }
 
-/// Client-visible model for route tests (role alias when possible).
+/// Client-visible model for route tests (profile-bound role aliases).
+///
+/// Source: `compatibility/manifest.json` → `routingProfiles` (see
+/// `docs/research/v0.1.7-source-review.md`). Never scatter dated Anthropic IDs.
 pub fn client_model_for_app(app: AppType, provider: &NormalizedProvider) -> String {
-    match app {
-        AppType::Claude | AppType::ClaudeDesktop => {
-            // Prefer stable client role aliases used by Claude Code
-            "claude-sonnet-4-20250514".into()
-        }
-        AppType::Codex => provider
-            .configured_model
-            .clone()
-            .or_else(|| provider.model_candidates.first().cloned())
-            .unwrap_or_else(|| "gpt-5".into()),
-        AppType::Gemini => provider
-            .configured_model
-            .clone()
-            .or_else(|| provider.model_candidates.first().cloned())
-            .unwrap_or_else(|| "gemini-2.0-flash".into()),
-        _ => provider
-            .configured_model
-            .clone()
-            .unwrap_or_else(|| "model".into()),
+    if let Some(m) = crate::ccs_adapter::routing_profile::client_route_model(app) {
+        return m;
     }
+    // Profile missing: prefer provider-configured model, then refuse inventing dated IDs.
+    provider
+        .configured_model
+        .clone()
+        .or_else(|| provider.model_candidates.first().cloned())
+        .unwrap_or_else(|| crate::ccs_adapter::routing_profile::default_direct_model_guess(app))
 }
 
 pub fn plan_route_attempts(
@@ -165,6 +157,10 @@ pub fn plan_route_attempts(
     mode: DiagnosisMode,
     app_row: &AppRoutingStatusView,
 ) -> Vec<RouteAttemptPlan> {
+    // Unknown / missing profile: do not invent route business requests.
+    if !crate::ccs_adapter::routing_profile::route_profile_verified() {
+        return vec![];
+    }
     let host = match routing.connect_host.as_deref() {
         Some(h) => h,
         None => return vec![],
@@ -436,6 +432,9 @@ mod tests {
         let app = routing.apps[0].clone();
         let plans = plan_route_attempts(&p, &routing, DiagnosisMode::Smart, &app);
         assert_eq!(plans.len(), 1);
+        // Profile-bound role alias (not dated Anthropic ID).
+        assert_eq!(plans[0].model, "claude-sonnet-5");
+        assert!(!plans[0].model.contains("20250514"));
         let req = build_route_request(&plans[0]).unwrap();
         let blob = format!("{:?}", req.headers);
         assert!(

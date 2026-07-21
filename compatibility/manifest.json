@@ -8,13 +8,13 @@
     "latestObservedRelease": "3.17.0",
     "latestVerifiedRelease": "3.17.0",
     "latestObservedReleasePublishedAt": "2026-07-13T16:05:55Z",
-    "latestMainCommit": "613fef70bc7d5e35299b4131935f738c85765b35",
-    "latestMainCommitDate": "2026-07-19T03:39:29Z",
+    "latestMainCommit": "606e7bbe75db7f8285f7a3be006fac22b5d22796",
+    "latestMainCommitDate": "2026-07-21T15:14:45Z",
     "baselineCommit": "3d176b98cc0bfd151a42882e88ab59b62083b92f",
     "baselineTag": "v3.17.0",
     "schemaVersion": 15,
     "verifiedReleases": ["3.17.0"],
-    "compatibleReleasePrefixes": ["3.17."],
+    "compatibleReleasePrefixes": ["3.17.", "3.18."],
     "defaultDataDir": "~/.cc-switch/",
     "databaseFile": "cc-switch.db",
     "schemaFingerprints": [
@@ -85,10 +85,43 @@
     "oauth_refresh_token"
   ],
   "rulesVersion": "1",
+  "routingProfiles": [
+    {
+      "id": "ccs-main-606e7bb-2026-07-21",
+      "ccSwitchCommit": "606e7bbe75db7f8285f7a3be006fac22b5d22796",
+      "releaseRange": "3.17.x–3.18.x-observed",
+      "placeholderToken": "PROXY_MANAGED",
+      "claudeClientModels": {
+        "haiku": "claude-haiku-4-5",
+        "sonnet": "claude-sonnet-5",
+        "opus": "claude-opus-4-8",
+        "fable": "claude-fable-5"
+      },
+      "defaultRouteModelByApp": {
+        "claude": "claude-sonnet-5",
+        "claude-desktop": "claude-sonnet-5",
+        "codex": "gpt-5.5",
+        "gemini": "gemini-3.5-flash"
+      },
+      "routes": {
+        "claude": ["/v1/messages"],
+        "claude-desktop": ["/v1/messages"],
+        "codex": ["/v1/responses", "/v1/chat/completions"],
+        "gemini": ["/v1beta/models/{model}:generateContent"]
+      },
+      "sources": [
+        "src-tauri/src/claude_desktop_config.rs@a35209a6e741",
+        "src/config/universalProviderPresets.ts@cd9e025b5a7a",
+        "src-tauri/src/proxy/types.rs@1c0ee0c58ab9",
+        "docs/research/v0.1.7-source-review.md"
+      ]
+    }
+  ],
   "notes": [
     "Baseline verified against farion1231/cc-switch v3.17.0 (annotated tag object 751793f..., target commit 3d176b9...).",
-    "Main branch head at check time: 613fef70 (2026-07-19) still uses SCHEMA_VERSION = 15.",
+    "Main branch head at check time: 606e7bbe (2026-07-21) — routingProfiles pin client role aliases from DEFAULT_PROXY_ROUTES.",
     "latestObservedRelease tracks upstream monitoring; latestVerifiedRelease is what Doctor uses for UI/compat conclusions.",
+    "Claude route probes use role aliases (claude-sonnet-5 etc.), not dated IDs like claude-sonnet-4-20250514.",
     "Doctor never writes to CC Switch database and never launches AI CLIs."
   ]
 }
