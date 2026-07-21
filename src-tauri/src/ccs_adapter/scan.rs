@@ -270,6 +270,12 @@ mod tests {
         conn.execute_batch(sql).unwrap();
     }
 
+    fn write_v13_fixture_db(path: &Path) {
+        let sql = include_str!("../../../compatibility/fixtures/synthetic-v13.sql");
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(sql).unwrap();
+    }
+
     #[test]
     fn scan_fixture_lists_and_skips_managed() {
         let tmp = NamedTempFile::new().unwrap();
@@ -304,5 +310,50 @@ mod tests {
         let blob = serde_json::to_string(&view.providers).unwrap();
         assert!(!blob.contains("sk-test-fake-key-for-unit-tests-only"));
         assert!(!normalized.is_empty());
+    }
+
+    #[test]
+    fn synthetic_v13_end_to_end_scan() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        drop(tmp);
+        write_v13_fixture_db(&path);
+        let before = file_sha256(&path).unwrap();
+        let (view, normalized) = scan_database(Some(&path)).unwrap();
+        let after = file_sha256(&path).unwrap();
+        assert_eq!(before, after, "DB SHA256 must remain unchanged");
+
+        let schema = view.schema.as_ref().expect("schema");
+        assert_eq!(schema.user_version, 13);
+        assert_eq!(schema.status, "compatible");
+        assert_eq!(schema.fingerprint_id, "ccs-schema-v13-providers-core");
+        assert!(view.can_test);
+        assert!(!view.providers.is_empty());
+
+        let claude = view
+            .providers
+            .iter()
+            .find(|p| p.source_id == "v13-claude-1")
+            .expect("claude provider visible");
+        assert_eq!(claude.app_type.as_str(), "claude");
+        assert!(claude.selectable);
+
+        let oauth = view
+            .providers
+            .iter()
+            .find(|p| p.source_id == "v13-codex-oauth")
+            .expect("oauth listed");
+        assert!(!oauth.selectable);
+
+        let blob = serde_json::to_string(&view).unwrap();
+        assert!(
+            !blob.contains("sk-test-fake-key-for-v13"),
+            "full key leaked into frontend view"
+        );
+        assert!(!normalized.is_empty());
+        // normalized still holds secrets in memory only — not serialized to view
+        assert!(normalized
+            .iter()
+            .any(|p| p.display_name.contains("V13 Claude")));
     }
 }

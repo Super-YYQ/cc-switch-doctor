@@ -1,5 +1,5 @@
 import { Copy, CheckCircle2 } from "lucide-react";
-import type { ProviderDiagnosisSummary } from "@/types";
+import type { ErrorEvidence, ProviderDiagnosisSummary } from "@/types";
 import { confidenceLabel, hostFromUrl, possibleCauses, statusBadge } from "@/lib/utils";
 import { useState } from "react";
 
@@ -8,9 +8,31 @@ interface Props {
   onCopy: (text: string, label: string) => void;
 }
 
+function collectEvidenceLines(s: ProviderDiagnosisSummary): string[] {
+  const lines: string[] = [];
+  for (const a of s.attempts) {
+    if (!a.errorEvidence?.length) continue;
+    for (const e of a.errorEvidence) {
+      lines.push(formatEvidence(a.statusCode, e));
+    }
+  }
+  return lines.slice(0, 6);
+}
+
+function formatEvidence(status: number | null | undefined, e: ErrorEvidence): string {
+  const parts: string[] = [];
+  if (status != null) parts.push(`HTTP ${status}`);
+  if (e.source) parts.push(e.source);
+  if (e.code) parts.push(`code=${e.code}`);
+  if (e.matchedKeyword) parts.push(`关键词：${e.matchedKeyword}`);
+  if (e.message) parts.push(e.message.slice(0, 120));
+  return parts.join(" · ");
+}
+
 export function ResultCard({ summary: s, onCopy }: Props) {
   const b = statusBadge(s.status);
   const [openAttempts, setOpenAttempts] = useState(false);
+  const [openEvidence, setOpenEvidence] = useState(false);
   const [openDebug, setOpenDebug] = useState(false);
 
   const evidenceTag =
@@ -21,46 +43,51 @@ export function ResultCard({ summary: s, onCopy }: Props) {
       : "未发现可用组合";
 
   const conclusion = b.zh;
+  const evidenceLines = collectEvidenceLines(s);
+  const keyEvidence = s.evidence.slice(0, 2);
+  const protocolVariantNote = s.attempts.find(
+    (a) => a.classification === "RESPONSE_PROTOCOL_VARIANT_OK" && a.suggestionNote,
+  )?.suggestionNote;
 
   return (
     <article className={`result-card ${b.kind}`}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 10,
-          alignItems: "flex-start",
-          flexWrap: "wrap",
-        }}
-      >
+      <div className="result-card-head">
         <div style={{ minWidth: 0 }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <strong style={{ fontSize: 15 }}>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <strong className="result-title">
               {s.appLabel} / {s.displayName}
             </strong>
             <span className={`badge ${b.kind}`}>{b.zh}</span>
           </div>
-          <div className="mono muted ellipsis" style={{ marginTop: 4 }} title={s.safeBaseUrl}>
+          <div className="mono muted ellipsis result-host" title={s.safeBaseUrl}>
             {s.safeBaseUrl && s.safeBaseUrl !== "—" ? hostFromUrl(s.safeBaseUrl) : "—"}
           </div>
         </div>
         <span className="badge">可信度 {confidenceLabel(s.confidence)}</span>
       </div>
 
-      <p style={{ margin: "12px 0 8px", lineHeight: 1.55, color: "var(--text-secondary)" }}>
-        {conclusion}
-      </p>
+      <p className="result-conclusion">{conclusion}</p>
 
-      <div className="badge info" style={{ marginBottom: 10 }}>
-        <CheckCircle2 size={12} /> {evidenceTag}
+      <div className="badge info result-tag">
+        <CheckCircle2 size={11} /> {evidenceTag}
       </div>
 
+      {protocolVariantNote && <div className="result-variant muted">{protocolVariantNote}</div>}
+
+      {keyEvidence.length > 0 && (
+        <ul className="result-key-evidence">
+          {keyEvidence.map((e) => (
+            <li key={e} className="mono muted">
+              {e}
+            </li>
+          ))}
+        </ul>
+      )}
+
       {possibleCauses(s.status) && (
-        <div style={{ marginBottom: 10, fontSize: 13 }}>
-          <div className="section-title" style={{ marginBottom: 4 }}>
-            可能原因
-          </div>
-          <ul className="secondary" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.5 }}>
+        <div className="result-causes">
+          <div className="section-title">可能原因</div>
+          <ul>
             {possibleCauses(s.status)!.map((c) => (
               <li key={c}>{c}</li>
             ))}
@@ -68,40 +95,37 @@ export function ResultCard({ summary: s, onCopy }: Props) {
         </div>
       )}
 
-      <div className="muted mono" style={{ fontSize: 11, marginBottom: 8 }}>
-        技术状态：{s.status}
-      </div>
-
-      <div
-        style={{
-          background: "var(--bg-soft)",
-          borderRadius: 10,
-          padding: "10px 12px",
-          border: "1px solid var(--border)",
-          marginBottom: 10,
-        }}
-      >
-        <div className="section-title" style={{ marginBottom: 6 }}>
-          建议
-        </div>
-        <p style={{ margin: 0, lineHeight: 1.55, fontSize: 13 }}>{s.suggestion}</p>
+      <div className="result-suggestion">
+        <div className="section-title">建议</div>
+        <p>{s.suggestion}</p>
       </div>
 
       {(s.successProtocol || s.successUrl) && (
-        <div style={{ marginBottom: 10, fontSize: 13 }}>
-          <div className="section-title" style={{ marginBottom: 4 }}>
-            成功组合
-          </div>
-          <div className="secondary">
-            {s.successProtocol && <div>协议：{s.successProtocol}</div>}
-            {s.successModel && <div>模型：{s.successModel}</div>}
-            {s.successUrl && (
-              <div className="mono ellipsis" title={s.successUrl}>
-                URL：{s.successUrl}
-              </div>
-            )}
-          </div>
+        <div className="result-success-combo secondary">
+          <div className="section-title">成功组合</div>
+          {s.successProtocol && <div>协议：{s.successProtocol}</div>}
+          {s.successModel && <div>模型：{s.successModel}</div>}
+          {s.successUrl && (
+            <div className="mono ellipsis" title={s.successUrl}>
+              URL：{s.successUrl}
+            </div>
+          )}
         </div>
+      )}
+
+      {evidenceLines.length > 0 && (
+        <details
+          className="accordion"
+          open={openEvidence}
+          onToggle={(e) => setOpenEvidence((e.target as HTMLDetailsElement).open)}
+        >
+          <summary>判定依据（{evidenceLines.length}）</summary>
+          <ul className="result-evidence-list">
+            {evidenceLines.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </details>
       )}
 
       <details
@@ -110,9 +134,9 @@ export function ResultCard({ summary: s, onCopy }: Props) {
         onToggle={(e) => setOpenAttempts((e.target as HTMLDetailsElement).open)}
       >
         <summary>尝试链（{s.attempts.length}）</summary>
-        <ul style={{ paddingLeft: 18, margin: "8px 0" }}>
+        <ul className="result-evidence-list">
           {s.evidence.map((e) => (
-            <li key={e} className="mono muted" style={{ fontSize: 12, marginBottom: 4 }}>
+            <li key={e} className="mono muted">
               {e}
             </li>
           ))}
@@ -121,36 +145,29 @@ export function ResultCard({ summary: s, onCopy }: Props) {
 
       <details
         className="accordion"
-        style={{ marginTop: 8 }}
         open={openDebug}
         onToggle={(e) => setOpenDebug((e.target as HTMLDetailsElement).open)}
       >
         <summary>调试日志（高级）</summary>
-        <pre
-          className="mono muted"
-          style={{
-            margin: "8px 0 0",
-            maxHeight: 160,
-            overflow: "auto",
-            background: "var(--bg-soft)",
-            borderRadius: 8,
-            padding: 10,
-            fontSize: 11,
-            whiteSpace: "pre-wrap",
-          }}
-        >
+        <pre className="debug-log mono muted">
           {s.attempts
             .map(
               (a, i) =>
                 `#${i + 1} ${a.classification} ${a.statusCode ?? "—"} ${a.latencyMs}ms ${a.url}${
-                  a.errorMessage ? `\n  ${a.errorMessage}` : ""
+                  a.reusedFromCache ? " [复用缓存]" : a.httpSent ? " [真实发送]" : ""
+                }${a.errorMessage ? `\n  ${a.errorMessage}` : ""}${
+                  a.errorEvidence?.length
+                    ? `\n  依据: ${a.errorEvidence
+                        .map((ev) => formatEvidence(a.statusCode, ev))
+                        .join("; ")}`
+                    : ""
                 }`,
             )
             .join("\n")}
         </pre>
       </details>
 
-      <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+      <div className="result-actions">
         <button
           className="btn btn-sm"
           type="button"
@@ -169,14 +186,14 @@ export function ResultCard({ summary: s, onCopy }: Props) {
             )
           }
         >
-          <Copy size={13} /> 复制摘要
+          <Copy size={12} /> 复制摘要
         </button>
         <button
           className="btn btn-sm"
           type="button"
           onClick={() => onCopy(s.suggestion, "已复制建议")}
         >
-          <Copy size={13} /> 复制建议
+          <Copy size={12} /> 复制建议
         </button>
       </div>
     </article>

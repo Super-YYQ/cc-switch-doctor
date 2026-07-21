@@ -43,7 +43,7 @@ export function ProviderRow({
         .join(" ")}
       onClick={onActivate}
     >
-      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+      <div className="provider-card-inner">
         <input
           type="checkbox"
           checked={checked}
@@ -51,40 +51,23 @@ export function ProviderRow({
           onClick={(e) => e.stopPropagation()}
           onChange={onToggle}
           aria-label={`选择 ${p.displayName}`}
-          style={{ marginTop: 3 }}
         />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: 8,
-              alignItems: "center",
-            }}
-          >
-            <div style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
-              <strong className="ellipsis" style={{ fontSize: 14 }}>
-                {p.displayName}
-              </strong>
+        <div className="provider-card-body">
+          <div className="provider-card-title-row">
+            <div className="provider-card-name">
+              <strong className="ellipsis">{p.displayName}</strong>
               {p.isCurrent && <span className="badge primary">当前</span>}
             </div>
             <span className={`badge ${status.kind}`} title={p.skipReason ?? status.zh}>
-              {!p.selectable && <Lock size={11} />}
+              {!p.selectable && <Lock size={10} />}
               {status.kind === "ok" && !resultStatus ? "可诊断" : status.zh}
             </span>
           </div>
-          <div className="muted mono ellipsis" style={{ marginTop: 4 }}>
+          <div className="muted mono ellipsis provider-meta">
             {p.appLabel}
             {p.maskedKey ? ` · ${p.maskedKey}` : ""}
           </div>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1.2fr 1fr",
-              gap: 8,
-              marginTop: 8,
-            }}
-          >
+          <div className="provider-host-model">
             <div className="mono muted ellipsis" title={p.safeBaseUrl}>
               {host}
             </div>
@@ -92,15 +75,7 @@ export function ProviderRow({
               {p.configuredModel || "—"}
             </div>
           </div>
-          <div
-            style={{
-              marginTop: 6,
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-              flexWrap: "wrap",
-            }}
-          >
+          <div className="provider-footer">
             <span className="badge">{p.protocolLabel || "未知协议"}</span>
             <button
               type="button"
@@ -114,11 +89,7 @@ export function ProviderRow({
               查看详情
             </button>
           </div>
-          {p.skipReason && (
-            <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
-              {p.skipReason}
-            </div>
-          )}
+          {p.skipReason && <div className="muted provider-skip">{p.skipReason}</div>}
         </div>
       </div>
     </article>

@@ -260,12 +260,17 @@ pub fn default_timeout(deep: bool) -> Duration {
 }
 
 pub fn redact_result(mut r: AttemptResult, redactor: &SecretRedactor) -> AttemptResult {
-    r.url = crate::security::sanitize_url_for_display(&r.url);
+    r.url = crate::security::redact::sanitize_url_with_redactor(&r.url, redactor);
     if let Some(m) = r.error_message.as_mut() {
         *m = redactor.redact(m);
     }
     if let Some(ex) = r.response_excerpt.as_mut() {
         *ex = truncate_utf8(&redactor.redact(ex), 512);
+    }
+    for e in &mut r.error_evidence {
+        if let Some(m) = e.message.as_mut() {
+            *m = redactor.redact(m);
+        }
     }
     r
 }

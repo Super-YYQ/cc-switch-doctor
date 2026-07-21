@@ -41,17 +41,17 @@ export function SessionControlBar({
   const finished = !running && completed > 0;
 
   return (
-    <section className="panel" style={{ marginTop: 12, padding: "10px 14px" }}>
+    <section className="panel session-bar" style={{ marginTop: 8, padding: "8px 12px" }}>
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 14,
+          gap: 10,
           flexWrap: "wrap",
           justifyContent: "space-between",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <div className="segmented" role="radiogroup" aria-label="诊断模式">
             {(
               [
@@ -93,7 +93,7 @@ export function SessionControlBar({
             ))}
           </div>
 
-          <div className="muted" style={{ fontSize: 13 }}>
+          <div className="muted" style={{ fontSize: 12 }}>
             {running ? (
               <>
                 {stopping ? "正在停止… · " : ""}
@@ -110,10 +110,10 @@ export function SessionControlBar({
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           {running ? (
             <button className="btn btn-danger" type="button" onClick={onCancel} disabled={stopping}>
-              <Square size={14} /> {stopping ? "正在停止" : "停止"}
+              <Square size={13} /> {stopping ? "正在停止" : "停止"}
             </button>
           ) : (
             <button
@@ -122,22 +122,26 @@ export function SessionControlBar({
               disabled={disabledStart}
               onClick={onStart}
             >
-              {finished ? <RotateCcw size={15} /> : <Activity size={15} />}
+              {finished ? <RotateCcw size={14} /> : <Activity size={14} />}
               {finished ? "重新诊断" : "开始诊断"}
             </button>
           )}
           {running && (
-            <Loader2 size={16} className="muted" style={{ animation: "spin 1s linear infinite" }} />
+            <Loader2 size={14} className="muted" style={{ animation: "spin 1s linear infinite" }} />
           )}
         </div>
       </div>
 
-      <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+      <div
+        className="muted ellipsis"
+        style={{ fontSize: 11.5, marginTop: 6 }}
+        title={modeDescription(mode)}
+      >
         {modeDescription(mode)}
       </div>
 
       {running && (
-        <div style={{ marginTop: 10 }}>
+        <div style={{ marginTop: 6 }}>
           <div className="progress">
             <span style={{ width: `${pct}%` }} />
           </div>

@@ -95,6 +95,10 @@ pub fn sanitize_url_for_display(raw: &str) -> String {
     };
     let _ = u.set_username("");
     let _ = u.set_password(None);
+    // Mask path segments that look like API keys (sk-..., long hex/base64-ish tokens)
+    let path = u.path().to_string();
+    let masked_path = mask_path_secrets(&path);
+    u.set_path(&masked_path);
     let pairs: Vec<(String, String)> = u
         .query_pairs()
         .map(|(k, _v)| (k.to_string(), "***".into()))
@@ -109,6 +113,41 @@ pub fn sanitize_url_for_display(raw: &str) -> String {
     }
     u.set_fragment(None);
     u.to_string()
+}
+
+/// Mask path segments that look like secrets even without a registered key.
+fn mask_path_secrets(path: &str) -> String {
+    path.split('/')
+        .map(|seg| {
+            if seg.is_empty() {
+                return seg.to_string();
+            }
+            let lower = seg.to_ascii_lowercase();
+            if lower.starts_with("sk-") && seg.len() >= 12 {
+                // ASCII-only mask so URL serialization never percent-encodes the marker.
+                return format!(
+                    "{}***{}",
+                    &seg[..6.min(seg.len())],
+                    &seg[seg.len().saturating_sub(4)..]
+                );
+            }
+            // long opaque tokens (>= 24 alnum/_/-)
+            if seg.len() >= 24
+                && seg
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+                && seg.chars().any(|c| c.is_ascii_digit())
+            {
+                return format!(
+                    "{}***{}",
+                    &seg[..4.min(seg.len())],
+                    &seg[seg.len().saturating_sub(4)..]
+                );
+            }
+            seg.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 pub fn sanitize_url_with_redactor(raw: &str, redactor: &SecretRedactor) -> String {
@@ -165,6 +204,35 @@ mod tests {
         );
         assert!(!s.contains("sk-path-secret-ABCDEFGH"));
         assert!(s.contains("x-api-key=***") || s.contains("***"));
+    }
+
+    #[test]
+    fn path_key_masked_without_register() {
+        let s = sanitize_url_for_display(
+            "https://api.example.com/proxy/sk-real-secret-ABCDEFGH1234/v1",
+        );
+        assert!(
+            !s.contains("sk-real-secret-ABCDEFGH1234"),
+            "full key leaked: {s}"
+        );
+        assert!(
+            s.contains("***") || s.contains("%2A%2A%2A"),
+            "expected mask marker in {s}"
+        );
+    }
+
+    #[test]
+    fn userinfo_and_error_body_keys() {
+        let mut r = SecretRedactor::new();
+        r.register_key("super-secret-key-value-ZZ");
+        let url = sanitize_url_with_redactor(
+            "https://user:super-secret-key-value-ZZ@api.example.com/v1",
+            &r,
+        );
+        assert!(!url.contains("super-secret-key-value-ZZ"));
+        assert!(!url.contains("user:"));
+        let body = r.redact("error at https://api.example.com/proxy/super-secret-key-value-ZZ/v1");
+        assert!(!body.contains("super-secret-key-value-ZZ"));
     }
 
     #[test]

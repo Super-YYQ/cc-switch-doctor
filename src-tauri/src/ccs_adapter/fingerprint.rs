@@ -367,4 +367,77 @@ mod tests {
         assert_eq!(fp.status, CompatibilityStatus::Unsupported);
         assert!(!fp.status.can_test());
     }
+
+    #[test]
+    fn manifest_matches_runtime_allowlist() {
+        let raw = include_str!("../../../compatibility/manifest.json");
+        let v: serde_json::Value = serde_json::from_str(raw).expect("manifest json");
+        let fingerprints = v["ccSwitch"]["schemaFingerprints"]
+            .as_array()
+            .expect("schemaFingerprints");
+
+        for entry in SCHEMA_ALLOWLIST {
+            let found = fingerprints
+                .iter()
+                .find(|f| f["id"] == entry.id)
+                .unwrap_or_else(|| panic!("manifest missing allowlist id {}", entry.id));
+            assert_eq!(
+                found["userVersion"].as_i64().unwrap() as i32,
+                entry.user_version,
+                "userVersion mismatch for {}",
+                entry.id
+            );
+            let status = found["status"].as_str().unwrap();
+            assert_eq!(
+                status,
+                entry.status.as_str(),
+                "status mismatch for {}",
+                entry.id
+            );
+
+            let tables: Vec<&str> = found["requiredTables"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t.as_str().unwrap())
+                .collect();
+            assert_eq!(
+                tables, entry.required_tables,
+                "tables mismatch for {}",
+                entry.id
+            );
+
+            let cols: Vec<&str> = found["providersColumns"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t.as_str().unwrap())
+                .collect();
+            assert_eq!(
+                cols, entry.providers_columns,
+                "providersColumns mismatch for {}",
+                entry.id
+            );
+
+            let ecols: Vec<&str> = found["providerEndpointsColumns"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t.as_str().unwrap())
+                .collect();
+            assert_eq!(
+                ecols, entry.provider_endpoints_columns,
+                "providerEndpointsColumns mismatch for {}",
+                entry.id
+            );
+        }
+
+        for f in fingerprints {
+            let id = f["id"].as_str().unwrap();
+            assert!(
+                SCHEMA_ALLOWLIST.iter().any(|e| e.id == id),
+                "manifest id {id} missing from SCHEMA_ALLOWLIST"
+            );
+        }
+    }
 }

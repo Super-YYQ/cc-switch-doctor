@@ -12,6 +12,26 @@ pub fn build_gemini_request(
     tool_call: bool,
     user_agent: Option<&str>,
 ) -> BuiltRequest {
+    build_gemini_request_with_auth(
+        base,
+        model,
+        api_key,
+        stream,
+        tool_call,
+        user_agent,
+        AuthScheme::XGoogApiKey,
+    )
+}
+
+pub fn build_gemini_request_with_auth(
+    base: &str,
+    model: &str,
+    api_key: &str,
+    stream: bool,
+    tool_call: bool,
+    user_agent: Option<&str>,
+    auth: AuthScheme,
+) -> BuiltRequest {
     let action = if stream {
         "streamGenerateContent"
     } else {
@@ -50,7 +70,14 @@ pub fn build_gemini_request(
 
     let mut headers = HashMap::new();
     headers.insert("Content-Type".into(), "application/json".into());
-    apply_auth(&mut headers, AuthScheme::XGoogApiKey, api_key);
+    match auth {
+        AuthScheme::QueryKey => {
+            url = append_query(&url, "key", api_key);
+        }
+        other => {
+            apply_auth(&mut headers, other, api_key);
+        }
+    }
     if let Some(ua) = user_agent {
         if !ua.trim().is_empty() {
             headers.insert("User-Agent".into(), ua.trim().to_string());
@@ -81,7 +108,6 @@ pub fn build_gemini_request(
 
 fn build_gemini_url(base: &str, model: &str, action: &str) -> String {
     let mut b = base.trim().trim_end_matches('/').to_string();
-    // Strip trailing version / models / full endpoint fragments once
     for suffix in [
         "/generateContent",
         "/streamGenerateContent",
@@ -92,9 +118,7 @@ fn build_gemini_url(base: &str, model: &str, action: &str) -> String {
             b.truncate(idx);
         }
     }
-    // drop model segment if base ends with /models/<something>
     if let Some(idx) = b.rfind("/models/") {
-        // only if after models there is no more version root
         b.truncate(idx);
     } else if b.ends_with("/models") {
         b.truncate(b.len() - "/models".len());
@@ -160,13 +184,16 @@ pub fn extract_gemini_tool_call(value: &serde_json::Value) -> Option<(String, St
 
 #[cfg(test)]
 mod tests {
-    use super::build_gemini_url;
+    use super::*;
+    use serde_json::json;
+
     #[test]
     fn no_double_v1beta() {
         let u = build_gemini_url("https://api.example.com/v1beta", "m", "generateContent");
         assert!(!u.contains("/v1beta/v1beta"), "{u}");
         assert!(u.contains("/v1beta/models/m:generateContent"), "{u}");
     }
+
     #[test]
     fn base_with_v1() {
         let u = build_gemini_url("https://api.example.com/v1", "m", "generateContent");
@@ -178,12 +205,46 @@ mod tests {
         assert!(!u.contains("/v1/v1beta"), "{u}");
     }
 
-    use super::*;
-    use serde_json::json;
-
     #[test]
     fn extract_text() {
         let v = json!({"candidates":[{"content":{"parts":[{"text":"CCS_DOCTOR_OK"}]}}]});
         assert_eq!(extract_gemini_text(&v).as_deref(), Some("CCS_DOCTOR_OK"));
+    }
+
+    #[test]
+    fn header_auth_puts_x_goog_api_key() {
+        let r = build_gemini_request_with_auth(
+            "https://api.example.com",
+            "m",
+            "secret-key-value",
+            false,
+            false,
+            None,
+            AuthScheme::XGoogApiKey,
+        );
+        assert!(r.headers.contains_key("x-goog-api-key"));
+        assert!(!r.url.contains("key="));
+    }
+
+    #[test]
+    fn query_auth_puts_key_param() {
+        let r = build_gemini_request_with_auth(
+            "https://api.example.com",
+            "m",
+            "secret-key-value",
+            false,
+            false,
+            None,
+            AuthScheme::QueryKey,
+        );
+        assert!(r.url.contains("key=secret-key-value"));
+        assert!(!r.headers.contains_key("x-goog-api-key"));
+    }
+
+    #[test]
+    fn stream_uses_alt_sse() {
+        let r = build_gemini_request("https://api.example.com", "m", "k", true, false, None);
+        assert!(r.url.contains("alt=sse"));
+        assert!(r.stream);
     }
 }
