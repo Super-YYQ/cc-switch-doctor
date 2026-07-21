@@ -27,6 +27,7 @@ struct GhRelease {
 
 pub async fn check_updates_now() -> UpdateStatus {
     let verified = load_verified_release();
+    let observed = load_observed_release();
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .user_agent(format!("CC-Switch-Doctor/{DOCTOR_VERSION}"))
@@ -54,7 +55,11 @@ pub async fn check_updates_now() -> UpdateStatus {
 
     let doctor_latest = doctor.as_ref().ok().map(|(t, _)| strip_v(t));
     let doctor_url = doctor.as_ref().ok().map(|(_, u)| u.clone());
-    let cc_latest = cc.as_ref().ok().map(|(t, _)| strip_v(t));
+    let cc_latest = cc
+        .as_ref()
+        .ok()
+        .map(|(t, _)| strip_v(t))
+        .or(Some(observed.clone()));
     let cc_url = cc.as_ref().ok().map(|(_, u)| u.clone());
 
     let doctor_update = doctor_latest
@@ -64,13 +69,7 @@ pub async fn check_updates_now() -> UpdateStatus {
 
     let mut messages = Vec::new();
     if let Some(l) = &cc_latest {
-        if l != &verified && !l.starts_with(&verified.trim_end_matches(".0").to_string()) {
-            messages.push(format!(
-                "CC Switch 官方最新 {l}，Doctor 已验证到 {verified}（可能尚未验证兼容）"
-            ));
-        } else {
-            messages.push(format!("CC Switch 官方最新 {l}，与已验证基线一致或兼容"));
-        }
+        messages.push(format_cc_switch_status(l, &verified, &observed));
     }
     if doctor_update {
         messages.push(format!(
@@ -97,6 +96,28 @@ pub async fn check_updates_now() -> UpdateStatus {
         message: messages.join("；"),
         checked: doctor.is_ok() || cc.is_ok(),
         error: err,
+    }
+}
+
+fn format_cc_switch_status(latest: &str, verified: &str, observed: &str) -> String {
+    if latest == verified {
+        format!("CC Switch 最新：{latest}；Doctor 已验证：{verified}；状态：已验证")
+    } else if is_newer(latest, verified) || latest != verified {
+        // Prefer explicit "not yet verified" when latest diverges from verified baseline.
+        let base = format!(
+            "CC Switch 最新：{latest}；Doctor 已验证：{verified}；状态：发现新版本，尚未完成兼容验证"
+        );
+        if latest != observed && !observed.is_empty() {
+            format!(
+                "{base}。检测到 CC Switch 新版本，但 Doctor 尚未完成该版本的兼容验证。当前不会自动升级兼容结论。"
+            )
+        } else {
+            format!(
+                "{base}。检测到 CC Switch 新版本，但 Doctor 尚未完成该版本的兼容验证。当前不会自动升级兼容结论。"
+            )
+        }
+    } else {
+        format!("CC Switch 最新：{latest}；Doctor 已验证：{verified}")
     }
 }
 
@@ -135,7 +156,26 @@ fn parse_semver(s: &str) -> (u64, u64, u64) {
 }
 
 fn load_verified_release() -> String {
-    // Embed from compatibility manifest at compile time when present
+    let raw = include_str!("../../../compatibility/manifest.json");
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
+        if let Some(s) = v
+            .pointer("/ccSwitch/latestVerifiedRelease")
+            .and_then(|x| x.as_str())
+        {
+            return s.to_string();
+        }
+        // Safe fallback: first verifiedReleases entry, never upgrade via observed.
+        if let Some(s) = v
+            .pointer("/ccSwitch/verifiedReleases/0")
+            .and_then(|x| x.as_str())
+        {
+            return s.to_string();
+        }
+    }
+    "3.17.0".into()
+}
+
+fn load_observed_release() -> String {
     let raw = include_str!("../../../compatibility/manifest.json");
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
         if let Some(s) = v
@@ -145,7 +185,7 @@ fn load_verified_release() -> String {
             return s.to_string();
         }
     }
-    "3.17.0".into()
+    load_verified_release()
 }
 
 #[cfg(test)]
@@ -156,5 +196,26 @@ mod tests {
     fn semver_compare() {
         assert!(is_newer("0.2.0", "0.1.0"));
         assert!(!is_newer("0.1.0", "0.1.0"));
+        assert!(is_newer("3.18.0", "3.17.0"));
+    }
+
+    #[test]
+    fn verified_reads_verified_field_not_observed() {
+        let v = load_verified_release();
+        assert_eq!(v, "3.17.0");
+    }
+
+    #[test]
+    fn message_when_newer_not_verified() {
+        let msg = format_cc_switch_status("3.18.0", "3.17.0", "3.18.0");
+        assert!(msg.contains("尚未完成兼容验证"));
+        assert!(!msg.contains("与已验证基线一致或兼容"));
+    }
+
+    #[test]
+    fn message_when_same_verified() {
+        let msg = format_cc_switch_status("3.17.0", "3.17.0", "3.17.0");
+        assert!(msg.contains("已验证"));
+        assert!(!msg.contains("尚未完成兼容验证"));
     }
 }

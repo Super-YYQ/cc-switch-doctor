@@ -1,29 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "@/App";
 
+async function dismissSafety(user: ReturnType<typeof userEvent.setup>) {
+  const knows = await screen.findAllByRole("button", { name: "知道了" });
+  await user.click(knows[0]);
+}
+
 describe("App UI product shell", () => {
-  it("renders product title and compact header", () => {
+  it("renders product title and compact header", async () => {
     render(<App />);
-    expect(screen.getByText("CC Switch Doctor")).toBeInTheDocument();
+    expect(await screen.findByText("CC Switch Doctor")).toBeInTheDocument();
     expect(screen.getAllByText(/只读扫描/).length).toBeGreaterThan(0);
   });
 
   it("opens safety drawer and can dismiss", async () => {
     const user = userEvent.setup();
     render(<App />);
-    // drawer may auto-open on load
-    const knows = await screen.findAllByRole("button", { name: "知道了" });
-    await user.click(knows[0]);
+    await dismissSafety(user);
     expect(screen.getByRole("button", { name: /开始诊断|重新诊断/ })).toBeInTheDocument();
   });
 
   it("defaults to smart mode and keeps managed row uncheckable", async () => {
     const user = userEvent.setup();
     render(<App />);
-    const knows = await screen.findAllByRole("button", { name: "知道了" });
-    await user.click(knows[0]);
+    await dismissSafety(user);
     expect(screen.getByRole("button", { name: "智能诊断" }).className).toMatch(/active/);
     expect(screen.getAllByText(/已跳过|官方登录/).length).toBeGreaterThan(0);
     expect(document.body.textContent).not.toMatch(/sk-[a-zA-Z0-9]{16,}/);
@@ -32,9 +34,48 @@ describe("App UI product shell", () => {
   it("primary diagnose button disabled without selection", async () => {
     const user = userEvent.setup();
     render(<App />);
-    const knows = await screen.findAllByRole("button", { name: "知道了" });
-    await user.click(knows[0]);
-    const start = screen.getByRole("button", { name: /开始诊断/ });
-    expect(start).toBeDisabled();
+    await dismissSafety(user);
+    expect(screen.getByRole("button", { name: /开始诊断/ })).toBeDisabled();
+  });
+
+  it("refresh clears selection so start becomes disabled", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await dismissSafety(user);
+    await screen.findByText("GLM Relay");
+
+    const glmCheck = screen.getByRole("checkbox", { name: "选择 GLM Relay" });
+    await user.click(glmCheck);
+    await waitFor(() => {
+      expect((glmCheck as HTMLInputElement).checked).toBe(true);
+      expect(screen.getByRole("button", { name: /开始诊断/ })).not.toBeDisabled();
+    });
+
+    await user.click(screen.getByRole("button", { name: "刷新配置" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /开始诊断/ })).toBeDisabled();
+    });
+  });
+
+  it("provider cards are plain articles without role=button", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await dismissSafety(user);
+    await screen.findByText("GLM Relay");
+    const articles = document.querySelectorAll("article.provider-card");
+    expect(articles.length).toBeGreaterThan(0);
+    articles.forEach((a) => {
+      expect(a.getAttribute("role")).not.toBe("button");
+    });
+    expect(screen.getAllByRole("button", { name: /查看详情/ }).length).toBeGreaterThan(0);
+  });
+
+  it("refresh and pick-db enabled when idle", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await dismissSafety(user);
+    expect(screen.getByRole("button", { name: "刷新配置" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "选择数据库" })).not.toBeDisabled();
   });
 });

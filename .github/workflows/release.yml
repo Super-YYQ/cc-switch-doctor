@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version without v prefix (e.g. 0.1.0)"
+        description: "Version without v prefix (must match package sources, e.g. 0.1.2)"
         required: true
-        default: "0.1.0"
+        type: string
 
 permissions:
   contents: write
@@ -21,31 +21,66 @@ jobs:
   release:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Resolve version
         id: ver
         shell: bash
         run: |
+          set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             V="${{ inputs.version }}"
           else
             V="${GITHUB_REF_NAME#v}"
           fi
+          if ! [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version must be x.y.z, got: $V"
+            exit 1
+          fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "tag=v$V" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@v4
+      - name: Refuse overwrite of existing tag/release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.ver.outputs.tag }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+              echo "Tag $TAG already exists on origin; refusing overwrite"
+              exit 1
+            fi
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "Release $TAG already exists; refusing overwrite"
+              exit 1
+            fi
+          fi
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - name: Install Rust stable
+        shell: bash
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal -c rustfmt,clippy
+          echo "$USERPROFILE/.cargo/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
         with:
           workspaces: src-tauri
 
       - run: npm ci
+
+      - name: Verify release version consistency
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ steps.ver.outputs.version }}
+        run: node scripts/verify-release-version.mjs --expected "${{ steps.ver.outputs.version }}"
 
       - name: Quality gate
         shell: bash
@@ -60,18 +95,7 @@ jobs:
           cargo test --manifest-path src-tauri/Cargo.toml
           npm run security:verify
 
-      - name: Optional code signing cert
-        if: ${{ env.WINDOWS_CERTIFICATE != '' }}
-        shell: pwsh
-        env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: |
-          $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
-          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP/cert.pfx", $bytes)
-          echo "WINDOWS_CERTIFICATE_PATH=$env:RUNNER_TEMP/cert.pfx" >> $env:GITHUB_ENV
-
-      - name: Tauri build
+      - name: Tauri build (unsigned)
         shell: bash
         run: npm run tauri build -- --bundles nsis
 
@@ -99,7 +123,7 @@ jobs:
           Get-ChildItem $out | Format-Table Name, Length
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: CC Switch Doctor v${{ steps.ver.outputs.version }}
@@ -110,6 +134,15 @@ jobs:
 
             Read-only, stateless, pure-HTTP diagnostics for CC Switch third-party providers.
 
+            ### Highlights
+            - Shared per-host request budget (30) across the whole diagnosis session
+            - In-session request result reuse (memory cache; no full API keys stored)
+            - OpenAI Chat `max_completion_tokens` → `max_tokens` compatibility fallback
+            - Refresh / re-scan fully clears selection and previous diagnosis state
+            - Distinguish CC Switch latest observed vs Doctor-verified versions
+            - Upstream Watch deduplicates open issues by exact title
+            - GitHub Actions pinned to full commit SHAs
+
             ### Security boundaries
             - Never launches Codex / Claude / OpenCode / Gemini CLI / CC Switch
             - Never reads `.codex` / `.claude` / OpenCode / Gemini login dirs
@@ -119,7 +152,7 @@ jobs:
 
             ### Compatibility baseline
             - CC Switch **v3.17.0** (schema user_version **15**)
-            - See `compatibility/manifest.json`
+            - See `compatibility/manifest.json` (`latestVerifiedRelease`)
 
             ### Assets
             - `CC-Switch-Doctor-v${{ steps.ver.outputs.version }}-Windows-x64-setup.exe`
@@ -127,8 +160,8 @@ jobs:
             - `SHA256SUMS.txt`
 
             ### Code signing
-            This build is **unsigned** unless a certificate was configured in repository secrets.
-            Windows SmartScreen may warn on first launch for unsigned builds. Choose "More info" → "Run anyway" if you trust the checksums.
+            **This release is unsigned.**
+            Windows SmartScreen may warn on first launch. Choose "More info" → "Run anyway" if you trust the checksums.
 
             ### Checksums
             Verify downloads against `SHA256SUMS.txt`.
@@ -144,14 +177,12 @@ jobs:
         run: |
           TAG="${{ steps.ver.outputs.tag }}"
           V="${{ steps.ver.outputs.version }}"
-          # wait a moment for consistency
           sleep 3
           assets=$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" --jq '.assets[] | "\(.name) \(.size)"')
           echo "$assets"
           echo "$assets" | grep -q "CC-Switch-Doctor-v${V}-Windows-x64-setup.exe"
           echo "$assets" | grep -q "CC-Switch-Doctor-v${V}-Windows-x64-portable.zip"
           echo "$assets" | grep -q "SHA256SUMS.txt"
-          # sizes > 0
           while read -r name size; do
             if [ "${size:-0}" -le 0 ]; then
               echo "Asset $name has non-positive size"

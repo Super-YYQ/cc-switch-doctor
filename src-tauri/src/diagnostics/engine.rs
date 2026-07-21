@@ -1,16 +1,21 @@
 use super::classifier::final_status_from_attempts;
 use super::planner::{plan_attempts, DiagnosisMode, PlannedAttempt};
+use super::session_budget::{key_fingerprint, OriginKey, RequestCacheKey, SessionBudget};
 use crate::ccs_adapter::{NormalizedProvider, ProtocolKind};
 use crate::protocols::anthropic::build_anthropic_request;
 use crate::protocols::gemini::build_gemini_request;
 use crate::protocols::http_executor::HttpExecutor;
 use crate::protocols::openai_chat::build_chat_request;
 use crate::protocols::openai_responses::build_responses_request;
-use crate::protocols::types::{default_timeout, AttemptResult};
+use crate::protocols::types::{
+    default_timeout, is_max_completion_tokens_unsupported, AttemptResult, RequestPurpose,
+    TokenLimitField,
+};
 use crate::security::origin::SameOriginPolicy;
 use crate::security::redact::SecretRedactor;
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,12 +139,11 @@ pub async fn run_diagnosis(
         }
     };
 
+    let session_budget = Arc::new(SessionBudget::new());
     let concurrency = concurrency.clamp(1, 3) as usize;
     let mut summaries = Vec::new();
-
-    // Process with limited concurrency
     let mut chunks = providers;
-    // simple sequential if concurrency=1, else join_set limited
+
     if concurrency == 1 {
         for p in chunks {
             if cancel.is_cancelled() {
@@ -152,7 +156,16 @@ pub async fn run_diagnosis(
                 });
                 return;
             }
-            let s = diagnose_one(&exec, &run_id, p, mode, &cancel, &emit).await;
+            let s = diagnose_one(
+                &exec,
+                &run_id,
+                p,
+                mode,
+                &cancel,
+                &emit,
+                Arc::clone(&session_budget),
+            )
+            .await;
             summaries.push(s);
         }
     } else {
@@ -165,7 +178,8 @@ pub async fn run_diagnosis(
                 let run_id = run_id2.clone();
                 let cancel = cancel2.clone();
                 let emit_ref = &emit;
-                async move { diagnose_one(exec, &run_id, p, mode, &cancel, emit_ref).await }
+                let budget = Arc::clone(&session_budget);
+                async move { diagnose_one(exec, &run_id, p, mode, &cancel, emit_ref, budget).await }
             })
             .buffer_unordered(concurrency)
             .collect()
@@ -188,6 +202,7 @@ async fn diagnose_one(
     mode: DiagnosisMode,
     cancel: &CancellationToken,
     emit: &impl Fn(DiagnosisEvent),
+    session_budget: Arc<SessionBudget>,
 ) -> ProviderDiagnosisSummary {
     let plans = plan_attempts(&provider, mode);
     emit(DiagnosisEvent::ProviderStarted {
@@ -200,11 +215,14 @@ async fn diagnose_one(
     let mut redactor = SecretRedactor::new();
     redactor.register_key(provider.api_key.expose_secret());
 
-    let origin = SameOriginPolicy::parse_url(&provider.base_url).unwrap_or(SameOriginPolicy {
-        scheme: "https".into(),
-        host: "invalid.invalid".into(),
-        port: None,
-    });
+    let origin_policy =
+        SameOriginPolicy::parse_url(&provider.base_url).unwrap_or(SameOriginPolicy {
+            scheme: "https".into(),
+            host: "invalid.invalid".into(),
+            port: None,
+        });
+    let origin_key = OriginKey::from_policy(&origin_policy);
+    let key_fp = key_fingerprint(provider.api_key.expose_secret());
 
     let mut attempts: Vec<AttemptResult> = Vec::new();
     let mut current_ok = false;
@@ -212,29 +230,37 @@ async fn diagnose_one(
     let mut success_plan: Option<&PlannedAttempt> = None;
     let mut success_result: Option<AttemptResult> = None;
     let mut stop_all = false;
-    let mut rate_limited = false;
-    // Per-host session budget (spec: max 30 requests per host per session/run)
-    let mut host_request_count: usize = 0;
-    const MAX_HOST_REQUESTS: usize = 30;
+    let mut tried_token_fallback = false;
+    let mut token_fallback_note: Option<String> = None;
 
     for (index, plan) in plans.iter().enumerate() {
         if cancel.is_cancelled() || stop_all {
             break;
         }
-        if host_request_count >= MAX_HOST_REQUESTS {
-            break;
-        }
-        // After current success in smart/deep, skip repair attempts but allow deep extras carefully
         if current_ok && !plan.is_current_config {
             if mode == DiagnosisMode::Smart {
                 break;
             }
-            // deep: still run stream/tool if planned and current was generate
             if !plan.stream && !plan.tool_call {
                 continue;
             }
         }
-        if rate_limited {
+
+        if let Some(reason) = session_budget.stop_reason(&origin_key) {
+            let r = AttemptResult::budget_stopped(
+                plan.protocol,
+                &plan.model,
+                &crate::security::sanitize_url_for_display(&plan.base_url),
+                reason.message(),
+                reason.classification(),
+            );
+            emit(DiagnosisEvent::AttemptFinished {
+                run_id: run_id.to_string(),
+                opaque_id: provider.opaque_id.clone(),
+                index,
+                result: r.clone(),
+            });
+            attempts.push(r);
             break;
         }
 
@@ -248,88 +274,86 @@ async fn diagnose_one(
             model: plan.model.clone(),
         });
 
-        let key = provider.api_key.expose_secret();
-        let ua = provider.custom_user_agent.as_deref();
-        let built = match plan.protocol {
-            ProtocolKind::OpenAiChat => build_chat_request(
-                &plan.base_url,
-                &plan.model,
-                key,
-                plan.stream,
-                plan.tool_call,
-                ua,
-            ),
-            ProtocolKind::OpenAiResponses => build_responses_request(
-                &plan.base_url,
-                &plan.model,
-                key,
-                plan.stream,
-                plan.tool_call,
-                ua,
-            ),
-            ProtocolKind::AnthropicMessages => build_anthropic_request(
-                &plan.base_url,
-                &plan.model,
-                key,
-                plan.stream,
-                plan.tool_call,
-                plan.use_bearer_for_anthropic,
-                ua,
-            ),
-            ProtocolKind::GeminiNative => build_gemini_request(
-                &plan.base_url,
-                &plan.model,
-                key,
-                plan.stream,
-                plan.tool_call,
-                ua,
-            ),
-            ProtocolKind::Unknown => {
-                let r = AttemptResult {
-                    ok: false,
-                    partial: false,
-                    status_code: None,
-                    latency_ms: 0,
-                    ttft_ms: None,
-                    protocol: plan.protocol,
-                    model: plan.model.clone(),
-                    url: plan.base_url.clone(),
-                    stream: plan.stream,
-                    purpose: crate::protocols::RequestPurpose::Generate,
-                    extracted_text: None,
-                    tool_call_ok: None,
-                    error_kind: Some("protocol".into()),
-                    error_message: Some("未知协议".into()),
-                    response_excerpt: None,
-                    classification: "UNSUPPORTED_PROTOCOL".into(),
-                };
-                emit(DiagnosisEvent::AttemptFinished {
-                    run_id: run_id.to_string(),
-                    opaque_id: provider.opaque_id.clone(),
-                    index,
-                    result: r.clone(),
-                });
-                attempts.push(r);
-                continue;
-            }
-        };
+        let mut result = execute_plan(
+            exec,
+            &provider,
+            plan,
+            &origin_policy,
+            &origin_key,
+            &key_fp,
+            &redactor,
+            cancel,
+            mode,
+            &session_budget,
+            TokenLimitField::MaxCompletionTokens,
+        )
+        .await;
 
-        let timeout = default_timeout(mode == DiagnosisMode::Deep || plan.stream);
-        let result = exec
-            .execute(built, &origin, &redactor, cancel, timeout)
+        if plan.protocol == ProtocolKind::OpenAiChat
+            && !result.ok
+            && !result.reused_from_cache
+            && is_max_completion_tokens_unsupported(&result)
+        {
+            tried_token_fallback = true;
+            emit(DiagnosisEvent::AttemptStarted {
+                run_id: run_id.to_string(),
+                opaque_id: provider.opaque_id.clone(),
+                index,
+                label: "字段兼容回退：max_completion_tokens → max_tokens".into(),
+                url: crate::security::sanitize_url_for_display(&plan.base_url),
+                protocol: plan.protocol.as_str().to_string(),
+                model: plan.model.clone(),
+            });
+            emit(DiagnosisEvent::AttemptFinished {
+                run_id: run_id.to_string(),
+                opaque_id: provider.opaque_id.clone(),
+                index,
+                result: result.clone(),
+            });
+            attempts.push(result);
+
+            result = execute_plan(
+                exec,
+                &provider,
+                plan,
+                &origin_policy,
+                &origin_key,
+                &key_fp,
+                &redactor,
+                cancel,
+                mode,
+                &session_budget,
+                TokenLimitField::MaxTokens,
+            )
             .await;
-        host_request_count += 1;
-
-        if result.classification == "RATE_LIMITED" || result.classification == "QUOTA_EXHAUSTED" {
-            if result.classification == "RATE_LIMITED" {
-                rate_limited = true;
-            }
-            if result.classification == "QUOTA_EXHAUSTED" && plan.is_current_config {
-                stop_all = true;
+            if result.ok {
+                token_fallback_note =
+                    Some("接口不支持 max_completion_tokens，切换为 max_tokens 后请求成功。".into());
+                result.suggestion_note = token_fallback_note.clone();
+            } else {
+                result.suggestion_note = Some(
+                    "字段兼容回退：max_completion_tokens → max_tokens 均已尝试，仍未成功。".into(),
+                );
             }
         }
+
+        if result.classification == "HOST_BUDGET_EXHAUSTED"
+            || result.classification == "HOST_RATE_LIMIT_STOPPED"
+        {
+            emit(DiagnosisEvent::AttemptFinished {
+                run_id: run_id.to_string(),
+                opaque_id: provider.opaque_id.clone(),
+                index,
+                result: result.clone(),
+            });
+            attempts.push(result);
+            break;
+        }
+
+        if result.classification == "QUOTA_EXHAUSTED" && plan.is_current_config {
+            stop_all = true;
+        }
         if result.classification == "KEY_INVALID" && plan.is_current_config {
-            // stop expensive attempts if key invalid on current endpoint
             stop_all = true;
         }
 
@@ -342,11 +366,12 @@ async fn diagnose_one(
                 success_plan = Some(plan);
                 success_result = Some(result.clone());
             }
-            if mode == DiagnosisMode::Smart && !plan.stream && !plan.tool_call {
-                // found working combo — stop further repair (deep continues limited)
-                if !plan.is_current_config {
-                    stop_all = true;
-                }
+            if mode == DiagnosisMode::Smart
+                && !plan.stream
+                && !plan.tool_call
+                && !plan.is_current_config
+            {
+                stop_all = true;
             }
         }
 
@@ -369,7 +394,6 @@ async fn diagnose_one(
         .map(|p| Some(p.model.as_str()) != provider.configured_model.as_deref())
         .unwrap_or(false);
 
-    // Local routing: codex wants responses but only chat works
     let needs_local = if provider.app_type == crate::ccs_adapter::AppType::Codex {
         if let Some(sp) = success_plan {
             if sp.protocol == ProtocolKind::OpenAiChat
@@ -407,7 +431,7 @@ async fn diagnose_one(
         )
     };
 
-    let suggestion = build_suggestion(
+    let mut suggestion = build_suggestion(
         &provider,
         current_ok,
         any_ok,
@@ -415,12 +439,18 @@ async fn diagnose_one(
         needs_local,
         &status,
     );
+    if let Some(note) = token_fallback_note {
+        suggestion = format!("{suggestion} {note}");
+    } else if tried_token_fallback && !any_ok {
+        suggestion =
+            format!("{suggestion} 字段兼容回退：max_completion_tokens → max_tokens 均已尝试。");
+    }
 
     let evidence: Vec<String> = attempts
         .iter()
         .enumerate()
         .map(|(i, a)| {
-            format!(
+            let mut line = format!(
                 "尝试 {}：{} {} -> {} ({})",
                 i + 1,
                 if a.stream { "STREAM" } else { "POST" },
@@ -429,7 +459,17 @@ async fn diagnose_one(
                     .map(|c| c.to_string())
                     .unwrap_or_else(|| "—".into()),
                 a.classification
-            )
+            );
+            if a.reused_from_cache {
+                line.push_str(" [复用缓存]");
+            }
+            if let Some(TokenLimitField::MaxTokens) = a.token_limit_field {
+                line.push_str(" [max_tokens]");
+            }
+            if let Some(note) = &a.suggestion_note {
+                line.push_str(&format!(" — {note}"));
+            }
+            line
         })
         .collect();
 
@@ -475,8 +515,167 @@ async fn diagnose_one(
         summary: summary.clone(),
     });
 
-    // zeroize-ish: SecretString drops with provider
     summary
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_plan(
+    exec: &HttpExecutor,
+    provider: &NormalizedProvider,
+    plan: &PlannedAttempt,
+    origin_policy: &SameOriginPolicy,
+    origin_key: &OriginKey,
+    key_fp: &str,
+    redactor: &SecretRedactor,
+    cancel: &CancellationToken,
+    mode: DiagnosisMode,
+    session_budget: &SessionBudget,
+    token_field: TokenLimitField,
+) -> AttemptResult {
+    let safe_url = crate::security::sanitize_url_for_display(&plan.base_url);
+
+    let cache_key = RequestCacheKey {
+        origin: origin_key.clone(),
+        key_fingerprint: key_fp.to_string(),
+        protocol: plan.protocol,
+        model: plan.model.clone(),
+        purpose: if plan.tool_call {
+            RequestPurpose::ToolCall
+        } else if plan.stream {
+            RequestPurpose::StreamGenerate
+        } else {
+            RequestPurpose::Generate
+        },
+        stream: plan.stream,
+        tool_call: plan.tool_call,
+        token_limit_field: if plan.protocol == ProtocolKind::OpenAiChat {
+            token_field
+        } else {
+            TokenLimitField::MaxCompletionTokens
+        },
+    };
+    if let Some(cached) = session_budget.get_cached(&cache_key) {
+        return cached;
+    }
+
+    if let Err(reason) = session_budget.try_reserve_send(origin_key) {
+        return AttemptResult::budget_stopped(
+            plan.protocol,
+            &plan.model,
+            &safe_url,
+            reason.message(),
+            reason.classification(),
+        );
+    }
+
+    if cancel.is_cancelled() {
+        session_budget.release_unsent(origin_key);
+        return AttemptResult {
+            ok: false,
+            partial: false,
+            status_code: None,
+            latency_ms: 0,
+            ttft_ms: None,
+            protocol: plan.protocol,
+            model: plan.model.clone(),
+            url: safe_url,
+            stream: plan.stream,
+            purpose: cache_key.purpose,
+            extracted_text: None,
+            tool_call_ok: None,
+            error_kind: Some("cancelled".into()),
+            error_message: Some("已取消".into()),
+            response_excerpt: None,
+            classification: "CANCELLED".into(),
+            http_sent: false,
+            reused_from_cache: false,
+            suggestion_note: None,
+            token_limit_field: Some(token_field),
+        };
+    }
+
+    let key = provider.api_key.expose_secret();
+    let ua = provider.custom_user_agent.as_deref();
+    let built = match plan.protocol {
+        ProtocolKind::OpenAiChat => build_chat_request(
+            &plan.base_url,
+            &plan.model,
+            key,
+            plan.stream,
+            plan.tool_call,
+            ua,
+            token_field,
+        ),
+        ProtocolKind::OpenAiResponses => build_responses_request(
+            &plan.base_url,
+            &plan.model,
+            key,
+            plan.stream,
+            plan.tool_call,
+            ua,
+        ),
+        ProtocolKind::AnthropicMessages => build_anthropic_request(
+            &plan.base_url,
+            &plan.model,
+            key,
+            plan.stream,
+            plan.tool_call,
+            plan.use_bearer_for_anthropic,
+            ua,
+        ),
+        ProtocolKind::GeminiNative => build_gemini_request(
+            &plan.base_url,
+            &plan.model,
+            key,
+            plan.stream,
+            plan.tool_call,
+            ua,
+        ),
+        ProtocolKind::Unknown => {
+            session_budget.release_unsent(origin_key);
+            return AttemptResult {
+                ok: false,
+                partial: false,
+                status_code: None,
+                latency_ms: 0,
+                ttft_ms: None,
+                protocol: plan.protocol,
+                model: plan.model.clone(),
+                url: safe_url,
+                stream: plan.stream,
+                purpose: RequestPurpose::Generate,
+                extracted_text: None,
+                tool_call_ok: None,
+                error_kind: Some("protocol".into()),
+                error_message: Some("未知协议".into()),
+                response_excerpt: None,
+                classification: "UNSUPPORTED_PROTOCOL".into(),
+                http_sent: false,
+                reused_from_cache: false,
+                suggestion_note: None,
+                token_limit_field: None,
+            };
+        }
+    };
+
+    let timeout = default_timeout(mode == DiagnosisMode::Deep || plan.stream);
+    let mut result = exec
+        .execute(built, origin_policy, redactor, cancel, timeout)
+        .await;
+    result.token_limit_field = if plan.protocol == ProtocolKind::OpenAiChat {
+        Some(token_field)
+    } else {
+        None
+    };
+
+    if !result.http_sent {
+        session_budget.release_unsent(origin_key);
+    } else {
+        session_budget.record_result(origin_key, &result.classification);
+        session_budget.store_cache(cache_key, result.clone());
+    }
+
+    result
 }
 
 fn build_suggestion(
@@ -520,7 +719,12 @@ fn build_suggestion(
             "鉴权失败：API Key 无效或未授权。请在 CC Switch 中更新 Key。本工具未修改配置。".into()
         }
         "QUOTA_EXHAUSTED" => "额度不足或配额耗尽。请检查供应商余额。本工具未修改配置。".into(),
-        "RATE_LIMITED" => "触发限流（429）。请稍后重试或降低并发。本工具未修改配置。".into(),
+        "RATE_LIMITED" | "HOST_RATE_LIMIT_STOPPED" => {
+            "触发限流（429）。请稍后重试或降低并发。本工具未修改配置。".into()
+        }
+        "HOST_BUDGET_EXHAUSTED" => {
+            "该 Host 在本次诊断会话中已达到 30 次请求上限。本工具未修改配置。".into()
+        }
         "MODEL_NOT_FOUND" => "模型不存在或无权访问。请检查模型名映射。本工具未修改配置。".into(),
         "ENDPOINT_NOT_FOUND" => {
             "端点不存在（404）。可尝试在智能诊断中修正 /v1 或协议。本工具未修改配置。".into()

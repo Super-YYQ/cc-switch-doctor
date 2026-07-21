@@ -120,24 +120,39 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [completedCount, setCompletedCount] = useState(0);
 
+  /** Replace scan data and wipe all session/result state bound to the previous DB view. */
+  const applyFreshScan = useCallback((view: ProviderScanView) => {
+    setScan(view);
+    setSelected(new Set());
+    setActiveId(null);
+    setSummaries([]);
+    setLiveLog([]);
+    setRunningIds(new Set());
+    setCompletedCount(0);
+    setSentRequests(0);
+    setCurrentName(null);
+    setRunId(null);
+    setRunning(false);
+    setError(null);
+  }, []);
+
   const load = useCallback(async () => {
     setError(null);
     try {
       if (!isTauri()) {
-        setScan(DEMO_SCAN);
-        setAppInfo({ name: "CC Switch Doctor", version: "0.1.1", doctorVersion: "0.1.1" });
+        applyFreshScan(DEMO_SCAN);
+        setAppInfo({ name: "CC Switch Doctor", version: "0.1.2", doctorVersion: "0.1.2" });
         if (!hideSafetySession) setSafetyOpen(true);
         return;
       }
       const [info, view] = await Promise.all([getAppInfo(), scanProviders()]);
       setAppInfo(info);
-      setScan(view);
-      setSelected(new Set());
+      applyFreshScan(view);
       if (!hideSafetySession) setSafetyOpen(true);
     } catch (e) {
       setError(String(e));
     }
-  }, [hideSafetySession]);
+  }, [hideSafetySession, applyFreshScan]);
 
   useEffect(() => {
     void load();
@@ -191,9 +206,16 @@ export default function App() {
     } else if (ev.type === "attempt_started") {
       setLiveLog((l) => [`→ ${ev.label} | ${ev.protocol} | ${ev.model} | ${ev.url}`, ...l]);
     } else if (ev.type === "attempt_finished") {
-      setSentRequests((n) => n + 1);
+      if (ev.result.httpSent !== false && !ev.result.reusedFromCache) {
+        setSentRequests((n) => n + 1);
+      }
+      const note = ev.result.reusedFromCache
+        ? " [复用]"
+        : ev.result.suggestionNote
+          ? ` — ${ev.result.suggestionNote}`
+          : "";
       setLiveLog((l) => [
-        `← ${ev.result.classification} ${ev.result.statusCode ?? ""} ${ev.result.latencyMs}ms`,
+        `← ${ev.result.classification} ${ev.result.statusCode ?? ""} ${ev.result.latencyMs}ms${note}`,
         ...l,
       ]);
     } else if (ev.type === "provider_finished") {
@@ -248,7 +270,6 @@ export default function App() {
     setCompletedCount(0);
     try {
       if (!isTauri()) {
-        // synthetic demo results for UI preview / screenshots
         setRunning(true);
         await new Promise((r) => setTimeout(r, 400));
         const demo: ProviderDiagnosisSummary[] = [
@@ -337,6 +358,7 @@ export default function App() {
   }
 
   async function onPickDb() {
+    if (running) return;
     try {
       if (!isTauri()) return;
       const { open } = await import("@tauri-apps/plugin-dialog");
@@ -346,9 +368,22 @@ export default function App() {
       });
       if (typeof file === "string") {
         const view = await selectDatabase(file);
-        setScan(view);
-        setSelected(new Set());
+        applyFreshScan(view);
       }
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function onRefresh() {
+    if (running) return;
+    try {
+      if (!isTauri()) {
+        applyFreshScan(DEMO_SCAN);
+        return;
+      }
+      const view = await refreshProviders();
+      applyFreshScan(view);
     } catch (e) {
       setError(String(e));
     }
@@ -358,7 +393,7 @@ export default function App() {
     try {
       if (!isTauri()) {
         setUpdates({
-          doctorVersion: "0.1.1",
+          doctorVersion: "0.1.2",
           doctorUpdateAvailable: false,
           verifiedCcSwitch: "3.17.0",
           message: "开发预览：更新检查需在应用内执行",
@@ -398,7 +433,7 @@ export default function App() {
         scan={scan}
         updates={updates}
         running={running}
-        onRefresh={() => void (isTauri() ? refreshProviders().then(setScan) : load())}
+        onRefresh={() => void onRefresh()}
         onPickDb={() => void onPickDb()}
         onCheckUpdates={() => void onCheckUpdates()}
         onOpenSafety={() => setSafetyOpen(true)}
@@ -480,3 +515,6 @@ export default function App() {
     </div>
   );
 }
+
+// Exported for unit tests
+export { DEMO_SCAN };

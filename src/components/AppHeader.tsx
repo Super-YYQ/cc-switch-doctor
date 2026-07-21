@@ -13,6 +13,11 @@ interface Props {
   onOpenSafety: () => void;
 }
 
+function updateMessage(updates: UpdateStatus | null): string | null {
+  if (updates?.message) return updates.message;
+  return null;
+}
+
 export function AppHeader({
   appInfo,
   scan,
@@ -24,6 +29,9 @@ export function AppHeader({
   onOpenSafety,
 }: Props) {
   const schema = scan?.schema?.status;
+  const observed = updates?.ccSwitchLatest ?? scan?.ccSwitchVersionHint ?? null;
+  const verified = updates?.verifiedCcSwitch ?? null;
+
   return (
     <header className="panel" style={{ padding: "12px 16px" }}>
       <div
@@ -53,7 +61,7 @@ export function AppHeader({
           <div style={{ minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <strong style={{ fontSize: 18 }}>CC Switch Doctor</strong>
-              <span className="badge primary">v{appInfo?.doctorVersion ?? "0.1.1"}</span>
+              <span className="badge primary">v{appInfo?.doctorVersion ?? "0.1.2"}</span>
             </div>
             <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
               只读扫描 · 纯 HTTP · 不启动 AI CLI
@@ -66,28 +74,37 @@ export function AppHeader({
             {scan?.discovery.found ? "DB 已连接" : "DB 未连接"}
           </span>
           <span className={`badge ${schemaKind(schema)}`}>{schemaLabel(schema)}</span>
-          {(scan?.ccSwitchVersionHint || updates?.verifiedCcSwitch) && (
-            <span className="badge">
-              CC Switch {scan?.ccSwitchVersionHint ?? updates?.verifiedCcSwitch}
-            </span>
-          )}
+          {observed && <span className="badge">CC Switch 最新：{observed}</span>}
+          {verified && <span className="badge ok">Doctor 已验证：{verified}</span>}
           <button className="btn btn-ghost btn-sm" type="button" onClick={onOpenSafety}>
             <CircleHelp size={14} /> 安全边界
           </button>
           <button className="btn btn-sm" type="button" onClick={onCheckUpdates}>
             检查更新
           </button>
-          <button className="btn btn-sm" type="button" disabled={running} onClick={onRefresh}>
+          <button
+            className="btn btn-sm"
+            type="button"
+            disabled={running}
+            onClick={onRefresh}
+            aria-label="刷新配置"
+          >
             <RefreshCw size={14} /> 刷新
           </button>
-          <button className="btn btn-sm" type="button" disabled={running} onClick={onPickDb}>
+          <button
+            className="btn btn-sm"
+            type="button"
+            disabled={running}
+            onClick={onPickDb}
+            aria-label="选择数据库"
+          >
             <FolderOpen size={14} /> 选择 DB
           </button>
         </div>
       </div>
-      {updates?.message && (
+      {updateMessage(updates) && (
         <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
-          {updates.message}
+          {updateMessage(updates)}
         </div>
       )}
       {scan?.schema?.message && (

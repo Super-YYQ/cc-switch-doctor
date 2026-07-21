@@ -1,4 +1,6 @@
-use super::types::{apply_auth, AuthScheme, BuiltRequest, RequestPurpose, MAX_TOKENS, PROMPT_EN};
+use super::types::{
+    apply_auth, AuthScheme, BuiltRequest, RequestPurpose, TokenLimitField, MAX_TOKENS, PROMPT_EN,
+};
 use crate::ccs_adapter::ProtocolKind;
 use crate::security::url_variants::join_url;
 use serde_json::json;
@@ -11,24 +13,29 @@ pub fn build_chat_request(
     stream: bool,
     tool_call: bool,
     user_agent: Option<&str>,
+    token_limit_field: TokenLimitField,
 ) -> BuiltRequest {
     let path = if base.trim_end_matches('/').ends_with("/v1") {
         "/chat/completions"
     } else {
         "/v1/chat/completions"
     };
-    // Also try without forcing v1 when base already includes full path-like ending
     let url = join_url(base, path);
 
-    // Prefer max_completion_tokens (modern OpenAI); max_tokens kept as compatibility fallback
-    // only when the planner retries after an unsupported-parameter error.
     let token_cap = if tool_call { 64 } else { MAX_TOKENS };
     let mut body = json!({
         "model": model,
         "messages": [{"role":"user","content": PROMPT_EN}],
-        "max_completion_tokens": token_cap,
         "stream": stream
     });
+    match token_limit_field {
+        TokenLimitField::MaxCompletionTokens => {
+            body["max_completion_tokens"] = json!(token_cap);
+        }
+        TokenLimitField::MaxTokens => {
+            body["max_tokens"] = json!(token_cap);
+        }
+    }
 
     if tool_call {
         body["tools"] = json!([{
@@ -82,7 +89,6 @@ pub fn build_chat_request(
 }
 
 pub fn extract_chat_text(value: &serde_json::Value) -> Option<String> {
-    // nested error
     if value.get("error").is_some() {
         return None;
     }
@@ -137,24 +143,122 @@ pub fn extract_chat_stream_delta(data: &str) -> Option<String> {
             return Some(c.to_string());
         }
     }
-    // reasoning_content is auxiliary only
     None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocols::types::is_max_completion_tokens_unsupported;
+    use crate::protocols::types::AttemptResult;
     use serde_json::json;
 
     #[test]
     fn builds_url_with_v1() {
-        let r = build_chat_request("https://api.example.com", "m", "k", false, false, None);
+        let r = build_chat_request(
+            "https://api.example.com",
+            "m",
+            "k",
+            false,
+            false,
+            None,
+            TokenLimitField::MaxCompletionTokens,
+        );
         assert!(r.url.ends_with("/v1/chat/completions"));
+    }
+
+    #[test]
+    fn first_request_uses_max_completion_tokens_only() {
+        let r = build_chat_request(
+            "https://api.example.com",
+            "m",
+            "k",
+            false,
+            false,
+            None,
+            TokenLimitField::MaxCompletionTokens,
+        );
+        let body = r.body.unwrap();
+        assert!(body.get("max_completion_tokens").is_some());
+        assert!(body.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn fallback_request_uses_max_tokens_only() {
+        let r = build_chat_request(
+            "https://api.example.com",
+            "m",
+            "k",
+            false,
+            false,
+            None,
+            TokenLimitField::MaxTokens,
+        );
+        let body = r.body.unwrap();
+        assert!(body.get("max_tokens").is_some());
+        assert!(body.get("max_completion_tokens").is_none());
     }
 
     #[test]
     fn extracts_content() {
         let v = json!({"choices":[{"message":{"content":"CCS_DOCTOR_OK"}}]});
         assert_eq!(extract_chat_text(&v).as_deref(), Some("CCS_DOCTOR_OK"));
+    }
+
+    fn failed(status: u16, classification: &str, msg: &str) -> AttemptResult {
+        AttemptResult {
+            ok: false,
+            partial: false,
+            status_code: Some(status),
+            latency_ms: 1,
+            ttft_ms: None,
+            protocol: ProtocolKind::OpenAiChat,
+            model: "m".into(),
+            url: "https://api.example.com/v1/chat/completions".into(),
+            stream: false,
+            purpose: RequestPurpose::Generate,
+            extracted_text: None,
+            tool_call_ok: None,
+            error_kind: Some("http".into()),
+            error_message: Some(msg.into()),
+            response_excerpt: Some(msg.into()),
+            classification: classification.into(),
+            http_sent: true,
+            reused_from_cache: false,
+            suggestion_note: None,
+            token_limit_field: Some(TokenLimitField::MaxCompletionTokens),
+        }
+    }
+
+    #[test]
+    fn unknown_parameter_triggers_fallback() {
+        let r = failed(
+            400,
+            "UNKNOWN_ERROR",
+            r#"{"error":{"message":"Unsupported parameter: 'max_completion_tokens'"}}"#,
+        );
+        assert!(is_max_completion_tokens_unsupported(&r));
+    }
+
+    #[test]
+    fn auth_401_does_not_trigger_fallback() {
+        let r = failed(401, "KEY_INVALID", "invalid api key max_completion_tokens");
+        assert!(!is_max_completion_tokens_unsupported(&r));
+    }
+
+    #[test]
+    fn rate_limit_429_does_not_trigger_fallback() {
+        let r = failed(429, "RATE_LIMITED", "rate limit max_completion_tokens");
+        assert!(!is_max_completion_tokens_unsupported(&r));
+    }
+
+    #[test]
+    fn model_not_found_does_not_trigger_fallback() {
+        let r = failed(
+            404,
+            "MODEL_NOT_FOUND",
+            "model not found max_completion_tokens",
+        );
+        assert!(!is_max_completion_tokens_unsupported(&r));
     }
 }

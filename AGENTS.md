@@ -38,3 +38,4 @@ npm run tauri build
 - `src-tauri/src/security` redaction, origin, URL variants
 - `scripts/` security and packaging gates
 - `compatibility/` verified schema fingerprints and fixtures
+- `docs/project/` design specs and review fix docs

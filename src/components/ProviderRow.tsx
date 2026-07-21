@@ -42,14 +42,6 @@ export function ProviderRow({
         .filter(Boolean)
         .join(" ")}
       onClick={onActivate}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onActivate();
-        }
-      }}
     >
       <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
         <input
@@ -100,8 +92,27 @@ export function ProviderRow({
               {p.configuredModel || "—"}
             </div>
           </div>
-          <div style={{ marginTop: 6 }}>
+          <div
+            style={{
+              marginTop: 6,
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              flexWrap: "wrap",
+            }}
+          >
             <span className="badge">{p.protocolLabel || "未知协议"}</span>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onActivate();
+              }}
+              aria-label={`查看详情 ${p.displayName}`}
+            >
+              查看详情
+            </button>
           </div>
           {p.skipReason && (
             <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>

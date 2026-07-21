@@ -1,3 +1,26 @@
+## [0.1.2] — 2026-07-21
+
+### Fixed
+
+- Shared Host request budget (30) across the entire diagnosis session, not per provider.
+- Consecutive `RATE_LIMITED` (HTTP 429) stops further requests to that Host for the run.
+- In-session memory cache reuses identical request combinations (key fingerprint only; never stores full keys).
+- OpenAI Chat truly falls back from `max_completion_tokens` to `max_tokens` when the field is explicitly unsupported.
+- Refresh / select-DB / first scan clears selected, active, summaries, live log, and run state.
+- Distinguish CC Switch `latestObservedRelease` vs Doctor `latestVerifiedRelease` in update messaging.
+- Upstream Watch ensures `upstream-change` label exists and dedups open issues by exact title.
+- Remove ineffective optional code-signing step; release notes state **This release is unsigned.**
+- Pin all GitHub Actions to full 40-char commit SHAs; add `scripts/verify-actions-pinned.mjs`.
+- Strong release version consistency checks (`package.json` / Cargo.toml / tauri.conf.json / manifest).
+- Windows UNC SQLite path URI construction (`file://server/share/...`).
+- Provider card accessibility: plain `<article>` + checkbox + explicit “查看详情”.
+- Readonly DB test asserts SHA-256 file stability (not just size).
+
+### Changed
+
+- Move project design specs under `docs/project/`.
+- Document future signing plans in `docs/code-signing.md` without affecting current releases.
+
 ## [0.1.1] — 2026-07-20
 
 ### Changed

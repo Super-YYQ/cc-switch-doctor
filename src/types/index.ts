@@ -75,6 +75,10 @@ export interface AttemptResult {
   errorMessage?: string | null;
   responseExcerpt?: string | null;
   classification: string;
+  httpSent?: boolean;
+  reusedFromCache?: boolean;
+  suggestionNote?: string | null;
+  tokenLimitField?: "max_completion_tokens" | "max_tokens" | null;
 }
 
 export interface ProviderDiagnosisSummary {

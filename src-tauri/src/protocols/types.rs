@@ -33,13 +33,35 @@ pub struct BuiltRequest {
     pub purpose: RequestPurpose,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum RequestPurpose {
     Generate,
     StreamGenerate,
     ToolCall,
     ListModels,
+}
+
+/// Which OpenAI Chat token-limit field to put on the request body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenLimitField {
+    #[default]
+    MaxCompletionTokens,
+    MaxTokens,
+}
+
+impl TokenLimitField {
+    pub fn as_json_key(self) -> &'static str {
+        match self {
+            Self::MaxCompletionTokens => "max_completion_tokens",
+            Self::MaxTokens => "max_tokens",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        self.as_json_key()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +83,18 @@ pub struct AttemptResult {
     pub error_message: Option<String>,
     pub response_excerpt: Option<String>,
     pub classification: String,
+    /// True only when `reqwest` actually started sending the request.
+    #[serde(default)]
+    pub http_sent: bool,
+    /// True when this result was served from the in-run memory cache.
+    #[serde(default)]
+    pub reused_from_cache: bool,
+    /// Optional UI note (e.g. cache reuse / token field fallback).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion_note: Option<String>,
+    /// Token limit field used for OpenAI Chat (if applicable).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_limit_field: Option<TokenLimitField>,
 }
 
 impl AttemptResult {
@@ -88,8 +122,85 @@ impl AttemptResult {
             error_message: Some(msg.to_string()),
             response_excerpt: None,
             classification: "NETWORK_UNREACHABLE".into(),
+            http_sent: false,
+            reused_from_cache: false,
+            suggestion_note: None,
+            token_limit_field: None,
         }
     }
+
+    pub fn budget_stopped(
+        protocol: ProtocolKind,
+        model: &str,
+        url: &str,
+        reason: &str,
+        classification: &str,
+    ) -> Self {
+        Self {
+            ok: false,
+            partial: false,
+            status_code: None,
+            latency_ms: 0,
+            ttft_ms: None,
+            protocol,
+            model: model.to_string(),
+            url: url.to_string(),
+            stream: false,
+            purpose: RequestPurpose::Generate,
+            extracted_text: None,
+            tool_call_ok: None,
+            error_kind: Some("budget".into()),
+            error_message: Some(reason.to_string()),
+            response_excerpt: None,
+            classification: classification.into(),
+            http_sent: false,
+            reused_from_cache: false,
+            suggestion_note: None,
+            token_limit_field: None,
+        }
+    }
+}
+
+/// True only when the error body clearly rejects `max_completion_tokens` as a field.
+/// Never true for auth, quota, rate-limit, network, model-missing, or bare 404.
+pub fn is_max_completion_tokens_unsupported(result: &AttemptResult) -> bool {
+    // Never fall back on these hard failures
+    match result.classification.as_str() {
+        "KEY_INVALID"
+        | "PERMISSION_DENIED"
+        | "QUOTA_EXHAUSTED"
+        | "RATE_LIMITED"
+        | "NETWORK_UNREACHABLE"
+        | "TLS_ERROR"
+        | "TIMEOUT"
+        | "MODEL_NOT_FOUND"
+        | "ENDPOINT_NOT_FOUND"
+        | "CANCELLED"
+        | "CROSS_ORIGIN_REDIRECT_BLOCKED"
+        | "HOST_BUDGET_EXHAUSTED"
+        | "HOST_RATE_LIMIT_STOPPED" => return false,
+        _ => {}
+    }
+
+    let body = format!(
+        "{} {}",
+        result.error_message.as_deref().unwrap_or(""),
+        result.response_excerpt.as_deref().unwrap_or("")
+    )
+    .to_ascii_lowercase();
+
+    if !body.contains("max_completion_tokens") {
+        return false;
+    }
+
+    body.contains("unknown parameter")
+        || body.contains("unsupported parameter")
+        || body.contains("unrecognized")
+        || body.contains("invalid parameter")
+        || body.contains("invalid field")
+        || body.contains("not supported")
+        || body.contains("unexpected argument")
+        || (body.contains("unknown") && body.contains("parameter"))
 }
 
 pub fn evaluate_text(text: &str) -> (bool, bool) {

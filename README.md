@@ -26,7 +26,7 @@
 | 无状态   | 关闭后无历史、无选择、无结果持久化                 |
 | 托管跳过 | OAuth / Copilot / ChatGPT Backend 等硬跳过，无绕过 |
 
-## 支持范围（v0.1.1）
+## 支持范围（v0.1.2）
 
 - 平台：Windows 10/11 x64
 - 应用：Claude Code、Claude Desktop、Codex、Gemini CLI、OpenCode、OpenClaw、Hermes、Grok Build
@@ -53,7 +53,7 @@
 
 ### 未签名与 SmartScreen
 
-若 Release 标注 **unsigned**，Windows SmartScreen 可能提示“未知发布者”。这是缺少代码签名证书所致。可选择“更多信息 → 仍要运行”，或用 `SHA256SUMS.txt` 校验后再运行。需要 [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。
+**This release is unsigned.** Windows SmartScreen 可能提示“未知发布者”。这是缺少代码签名证书所致。可选择“更多信息 → 仍要运行”，或用 `SHA256SUMS.txt` 校验后再运行。需要 [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。未来签名计划见 [`docs/code-signing.md`](docs/code-signing.md)。
 
 ## 使用
 

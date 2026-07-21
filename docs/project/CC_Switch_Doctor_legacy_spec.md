@@ -356,7 +356,7 @@ npm + package-lock.json
 Tauri capabilities 中不得包含：
 
 - shell 执行；
--任意文件系统写入；
+  -任意文件系统写入；
 - 任意目录读取；
 - updater 自动安装（v0.1.0 只提醒）；
 - 全局快捷键；
@@ -847,9 +847,7 @@ Reply with exactly CCS_DOCTOR_OK and nothing else.
 ```json
 {
   "model": "<model>",
-  "messages": [
-    {"role": "user", "content": "Reply with exactly CCS_DOCTOR_OK and nothing else."}
-  ],
+  "messages": [{ "role": "user", "content": "Reply with exactly CCS_DOCTOR_OK and nothing else." }],
   "max_tokens": 16,
   "stream": false
 }
@@ -919,9 +917,7 @@ output[].content[].text
 {
   "model": "<model>",
   "max_tokens": 16,
-  "messages": [
-    {"role": "user", "content": "Reply with exactly CCS_DOCTOR_OK and nothing else."}
-  ],
+  "messages": [{ "role": "user", "content": "Reply with exactly CCS_DOCTOR_OK and nothing else." }],
   "stream": false
 }
 ```
@@ -961,7 +957,7 @@ content[].text
   "contents": [
     {
       "role": "user",
-      "parts": [{"text": "Reply with exactly CCS_DOCTOR_OK and nothing else."}]
+      "parts": [{ "text": "Reply with exactly CCS_DOCTOR_OK and nothing else." }]
     }
   ],
   "generationConfig": {

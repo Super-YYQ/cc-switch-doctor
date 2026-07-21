@@ -13,6 +13,7 @@ function read(p) {
 const pkg = JSON.parse(read("package.json"));
 const cargo = read("src-tauri/Cargo.toml");
 const tauri = JSON.parse(read("src-tauri/tauri.conf.json"));
+const manifest = JSON.parse(read("compatibility/manifest.json"));
 
 const cargoMatch = cargo.match(/^version\s*=\s*"([^"]+)"/m);
 if (!cargoMatch) {
@@ -24,6 +25,7 @@ const versions = {
   "package.json": pkg.version,
   "src-tauri/Cargo.toml": cargoMatch[1],
   "src-tauri/tauri.conf.json": tauri.version,
+  "compatibility/manifest.json doctorVersion": manifest.doctorVersion,
 };
 
 const unique = new Set(Object.values(versions));

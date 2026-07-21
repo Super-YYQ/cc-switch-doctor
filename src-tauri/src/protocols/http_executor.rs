@@ -68,6 +68,10 @@ impl HttpExecutor {
                 error_message: Some("已取消".into()),
                 response_excerpt: None,
                 classification: "CANCELLED".into(),
+                http_sent: false,
+                reused_from_cache: false,
+                suggestion_note: None,
+                token_limit_field: None,
             };
         }
 
@@ -92,6 +96,10 @@ impl HttpExecutor {
                         error_message: Some("跨 Host URL 被阻断，未发送凭据".into()),
                         response_excerpt: None,
                         classification: "CROSS_ORIGIN_REDIRECT_BLOCKED".into(),
+                        http_sent: false,
+                        reused_from_cache: false,
+                        suggestion_note: None,
+                        token_limit_field: None,
                     },
                     redactor,
                 );
@@ -133,6 +141,10 @@ impl HttpExecutor {
                     error_message: Some("已取消".into()),
                     response_excerpt: None,
                     classification: "CANCELLED".into(),
+                    http_sent: false,
+                    reused_from_cache: false,
+                    suggestion_note: None,
+                    token_limit_field: None,
                 };
             }
             res = send_fut => res,
@@ -170,6 +182,10 @@ impl HttpExecutor {
                     error_message: Some(msg),
                     response_excerpt: None,
                     classification: classification.into(),
+                    http_sent: true,
+                    reused_from_cache: false,
+                    suggestion_note: None,
+                    token_limit_field: None,
                 };
             }
         };
@@ -212,6 +228,10 @@ impl HttpExecutor {
                 } else {
                     "ENDPOINT_NOT_FOUND".into()
                 },
+                http_sent: true,
+                reused_from_cache: false,
+                suggestion_note: None,
+                token_limit_field: None,
             };
         }
 
@@ -242,6 +262,10 @@ impl HttpExecutor {
                     error_message: Some(redactor.redact(&e.to_string())),
                     response_excerpt: None,
                     classification: "NETWORK_UNREACHABLE".into(),
+                    http_sent: true,
+                    reused_from_cache: false,
+                    suggestion_note: None,
+                    token_limit_field: None,
                 };
             }
         };
@@ -264,6 +288,10 @@ impl HttpExecutor {
                 error_message: Some("响应体超过 2MB 限制".into()),
                 response_excerpt: None,
                 classification: "UNKNOWN_ERROR".into(),
+                http_sent: true,
+                reused_from_cache: false,
+                suggestion_note: None,
+                token_limit_field: None,
             };
         }
 
@@ -355,6 +383,10 @@ impl HttpExecutor {
                 } else {
                     "TOOL_CALLING_UNSUPPORTED".into()
                 },
+                http_sent: true,
+                reused_from_cache: false,
+                suggestion_note: None,
+                token_limit_field: None,
             };
         }
 
@@ -402,6 +434,10 @@ impl HttpExecutor {
                     } else {
                         "UNKNOWN_ERROR".into()
                     },
+                    http_sent: true,
+                    reused_from_cache: false,
+                    suggestion_note: None,
+                    token_limit_field: None,
                 }
             }
             None => AttemptResult {
@@ -421,6 +457,10 @@ impl HttpExecutor {
                 error_message: Some("HTTP 成功但无法按协议解析文本".into()),
                 response_excerpt: Some(truncate(&redactor.redact(&body_text), 512)),
                 classification: "UNSUPPORTED_PROTOCOL".into(),
+                http_sent: true,
+                reused_from_cache: false,
+                suggestion_note: None,
+                token_limit_field: None,
             },
         }
     }
@@ -455,6 +495,10 @@ impl HttpExecutor {
                 error_message: Some(excerpt.clone()),
                 response_excerpt: Some(excerpt),
                 classification: classify_http_failure(status_code, &body),
+                http_sent: true,
+                reused_from_cache: false,
+                suggestion_note: None,
+                token_limit_field: None,
             };
         }
 
@@ -488,6 +532,10 @@ impl HttpExecutor {
                     error_message: Some("已取消".into()),
                     response_excerpt: None,
                     classification: "CANCELLED".into(),
+                    http_sent: true,
+                    reused_from_cache: false,
+                    suggestion_note: None,
+                    token_limit_field: None,
                 };
             }
 
@@ -521,6 +569,10 @@ impl HttpExecutor {
                         error_message: Some(redactor.redact(&e.to_string())),
                         response_excerpt: None,
                         classification: "STREAMING_UNSUPPORTED".into(),
+                        http_sent: true,
+                        reused_from_cache: false,
+                        suggestion_note: None,
+                        token_limit_field: None,
                     };
                 }
             };
@@ -587,6 +639,10 @@ impl HttpExecutor {
                 error_message: Some("流式响应未解析到文本增量".into()),
                 response_excerpt: None,
                 classification: "STREAMING_UNSUPPORTED".into(),
+                http_sent: true,
+                reused_from_cache: false,
+                suggestion_note: None,
+                token_limit_field: None,
             };
         }
         let (ok, partial) = evaluate_text(&text);
@@ -619,6 +675,10 @@ impl HttpExecutor {
             } else {
                 "STREAMING_UNSUPPORTED".into()
             },
+            http_sent: true,
+            reused_from_cache: false,
+            suggestion_note: None,
+            token_limit_field: None,
         }
     }
 }
