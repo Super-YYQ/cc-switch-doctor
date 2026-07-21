@@ -52,11 +52,11 @@ pub fn classify_structured_error_envelope(
             .or_else(|| err.as_str())
             .unwrap_or("")
             .to_string();
-        let code = err
-            .get("code")
-            .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| {
-                v.as_i64().map(|n| n.to_string())
-            }));
+        let code = err.get("code").and_then(|v| {
+            v.as_str()
+                .map(|s| s.to_string())
+                .or_else(|| v.as_i64().map(|n| n.to_string()))
+        });
         let (cls, mut evidence) = classify_with_evidence(status, body, None);
         if evidence.is_empty() {
             evidence.push(ErrorEvidence {

@@ -113,7 +113,9 @@ fn unwrap_wrappers(value: &Value, depth: usize) -> Vec<Value> {
 
 fn is_sensitive_key(k: &str) -> bool {
     let lower = k.to_ascii_lowercase();
-    SENSITIVE_KEYS.iter().any(|s| lower == *s || lower.contains(s))
+    SENSITIVE_KEYS
+        .iter()
+        .any(|s| lower == *s || lower.contains(s))
 }
 
 fn collect_known_text(value: &Value, budget: &mut usize, depth: usize, out: &mut String) {

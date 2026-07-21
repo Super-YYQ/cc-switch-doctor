@@ -125,7 +125,11 @@ fn mask_path_secrets(path: &str) -> String {
             let lower = seg.to_ascii_lowercase();
             if lower.starts_with("sk-") && seg.len() >= 12 {
                 // ASCII-only mask so URL serialization never percent-encodes the marker.
-                return format!("{}***{}", &seg[..6.min(seg.len())], &seg[seg.len().saturating_sub(4)..]);
+                return format!(
+                    "{}***{}",
+                    &seg[..6.min(seg.len())],
+                    &seg[seg.len().saturating_sub(4)..]
+                );
             }
             // long opaque tokens (>= 24 alnum/_/-)
             if seg.len() >= 24

@@ -352,6 +352,8 @@ mod tests {
         );
         assert!(!normalized.is_empty());
         // normalized still holds secrets in memory only — not serialized to view
-        assert!(normalized.iter().any(|p| p.display_name.contains("V13 Claude")));
+        assert!(normalized
+            .iter()
+            .any(|p| p.display_name.contains("V13 Claude")));
     }
 }
