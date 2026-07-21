@@ -455,8 +455,18 @@ async fn diagnose_one(
 
         if result.ok {
             any_ok = true;
-            // Guessed models must not count as CURRENT_CONFIG_OK
-            let counts_as_current = plan.is_current_config && !model_is_guessed;
+            // Only native direct success on current config (non-guessed model)
+            // can set current_ok. Cross-protocol / loose must never do so.
+            let counts_as_current = plan.is_current_config
+                && !model_is_guessed
+                && result.is_native_success()
+                && !matches!(
+                    result.classification.as_str(),
+                    "RESPONSE_PROTOCOL_VARIANT_OK"
+                        | "DIRECT_PROTOCOL_VARIANT_OK"
+                        | "LOOSE_RESPONSE_TEXT_OK"
+                        | "STREAM_PROTOCOL_VARIANT_OK"
+                );
             if counts_as_current {
                 current_ok = true;
             }
@@ -516,7 +526,30 @@ async fn diagnose_one(
             .filter(|a| !a.ok)
             .map(|a| a.classification.as_str())
             .collect();
-        if failed.is_empty() {
+        // Prefer best successful classification when any_ok for status mapping
+        let success_cls: Vec<&str> = attempts
+            .iter()
+            .filter(|a| a.ok || a.classification == "LOOSE_RESPONSE_TEXT_OK")
+            .map(|a| a.classification.as_str())
+            .collect();
+        if !success_cls.is_empty() {
+            // Prefer native GENERATE_OK over variants
+            if success_cls
+                .iter()
+                .any(|c| *c == "GENERATE_OK" || *c == "STREAM_OK" || *c == "TOOL_CALLING_OK")
+            {
+                "GENERATE_OK".into()
+            } else if success_cls
+                .iter()
+                .any(|c| *c == "RESPONSE_PROTOCOL_VARIANT_OK" || *c == "DIRECT_PROTOCOL_VARIANT_OK")
+            {
+                "RESPONSE_PROTOCOL_VARIANT_OK".into()
+            } else if success_cls.iter().any(|c| *c == "LOOSE_RESPONSE_TEXT_OK") {
+                "LOOSE_RESPONSE_TEXT_OK".into()
+            } else {
+                success_cls.first().unwrap_or(&"UNKNOWN_ERROR").to_string()
+            }
+        } else if failed.is_empty() {
             "UNKNOWN_ERROR".into()
         } else {
             best_classification(failed)
@@ -708,6 +741,10 @@ async fn execute_plan(
             suggestion_note: None,
             token_limit_field: Some(token_field),
             error_evidence: vec![],
+            channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+            response_compatibility: None,
+            requested_protocol: None,
+            matched_protocol: None,
         };
     }
 
@@ -785,6 +822,10 @@ async fn execute_plan(
                 suggestion_note: None,
                 token_limit_field: None,
                 error_evidence: vec![],
+                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                response_compatibility: None,
+                requested_protocol: None,
+                matched_protocol: None,
             };
         }
     };
@@ -828,6 +869,10 @@ async fn execute_plan(
                 suggestion_note: None,
                 token_limit_field: token_for_key,
                 error_evidence: vec![],
+                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                response_compatibility: None,
+                requested_protocol: None,
+                matched_protocol: None,
             },
         };
     }
@@ -868,6 +913,10 @@ async fn execute_plan(
             suggestion_note: None,
             token_limit_field: token_for_key,
             error_evidence: vec![],
+            channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+            response_compatibility: None,
+            requested_protocol: None,
+            matched_protocol: None,
         };
         session_budget.finish_flight(&cache_key, r.clone());
         return r;

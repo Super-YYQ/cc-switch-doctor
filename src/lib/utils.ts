@@ -55,8 +55,29 @@ export function statusBadge(status: string): { label: string; kind: StatusKind; 
       kind: "info",
       zh: "目标协议与实际返回结构不同，但解析成功",
     },
+    DIRECT_PROTOCOL_VARIANT_OK: {
+      label: status,
+      kind: "info",
+      zh: "上游直连跨协议解析成功，不能证明当前协议配置完整可用",
+    },
+    DIRECT_NATIVE_OK: { label: status, kind: "ok", zh: "上游直连原生协议成功" },
+    DIRECT_LOOSE_TEXT_OK: {
+      label: status,
+      kind: "info",
+      zh: "宽松字段解析到文本，不能证明协议兼容",
+    },
+    LOOSE_RESPONSE_TEXT_OK: {
+      label: status,
+      kind: "info",
+      zh: "宽松字段解析到文本，不能证明协议兼容",
+    },
     GENERATE_OK: { label: status, kind: "ok", zh: "生成请求成功" },
     STREAM_OK: { label: status, kind: "ok", zh: "流式请求成功" },
+    STREAM_PROTOCOL_VARIANT_OK: {
+      label: status,
+      kind: "info",
+      zh: "流式跨协议解析成功",
+    },
     PARTIAL_TEXT: { label: status, kind: "info", zh: "返回了文本但缺少成功标记" },
     PROVIDER_BUDGET_EXHAUSTED: {
       label: status,

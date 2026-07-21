@@ -51,6 +51,25 @@ pub enum TokenLimitField {
     MaxTokens,
 }
 
+/// How the response text was recovered from the body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseCompatibility {
+    #[default]
+    Native,
+    CrossProtocol,
+    LooseField,
+}
+
+/// Which diagnostic channel produced an attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosisChannel {
+    #[default]
+    DirectUpstream,
+    CcsLocalRoute,
+}
+
 impl TokenLimitField {
     pub fn as_json_key(self) -> &'static str {
         match self {
@@ -109,6 +128,18 @@ pub struct AttemptResult {
     pub token_limit_field: Option<TokenLimitField>,
     #[serde(default)]
     pub error_evidence: Vec<ErrorEvidence>,
+    /// Direct upstream vs CCS local route.
+    #[serde(default)]
+    pub channel: DiagnosisChannel,
+    /// How the body text was extracted when ok/partial.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_compatibility: Option<ResponseCompatibility>,
+    /// Protocol we requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_protocol: Option<ProtocolKind>,
+    /// Protocol shape that actually matched (may differ).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_protocol: Option<ProtocolKind>,
 }
 
 impl AttemptResult {
@@ -141,6 +172,10 @@ impl AttemptResult {
             suggestion_note: None,
             token_limit_field: None,
             error_evidence: vec![],
+            channel: DiagnosisChannel::DirectUpstream,
+            response_compatibility: None,
+            requested_protocol: Some(protocol),
+            matched_protocol: None,
         }
     }
 
@@ -173,7 +208,30 @@ impl AttemptResult {
             suggestion_note: None,
             token_limit_field: None,
             error_evidence: vec![],
+            channel: DiagnosisChannel::DirectUpstream,
+            response_compatibility: None,
+            requested_protocol: Some(protocol),
+            matched_protocol: None,
         }
+    }
+
+    /// Native success on the direct channel can count as current-config success.
+    pub fn is_native_success(&self) -> bool {
+        self.ok
+            && matches!(
+                self.response_compatibility,
+                Some(ResponseCompatibility::Native) | None
+            )
+            && !matches!(
+                self.classification.as_str(),
+                "RESPONSE_PROTOCOL_VARIANT_OK"
+                    | "DIRECT_PROTOCOL_VARIANT_OK"
+                    | "DIRECT_LOOSE_TEXT_OK"
+                    | "LOOSE_RESPONSE_TEXT_OK"
+                    | "STREAM_PROTOCOL_VARIANT_OK"
+                    | "PARTIAL_TEXT"
+            )
+            && self.channel == DiagnosisChannel::DirectUpstream
     }
 }
 

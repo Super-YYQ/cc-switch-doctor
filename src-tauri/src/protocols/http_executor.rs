@@ -71,6 +71,10 @@ impl HttpExecutor {
                 suggestion_note: None,
                 token_limit_field: None,
                 error_evidence: vec![],
+                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                response_compatibility: None,
+                requested_protocol: None,
+                matched_protocol: None,
             };
         }
 
@@ -100,6 +104,10 @@ impl HttpExecutor {
                         suggestion_note: None,
                         token_limit_field: None,
                         error_evidence: vec![],
+                        channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                        response_compatibility: None,
+                        requested_protocol: None,
+                        matched_protocol: None,
                     },
                     redactor,
                 );
@@ -146,6 +154,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: vec![],
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
             res = send_fut => res,
@@ -188,6 +200,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: vec![],
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
         };
@@ -235,6 +251,10 @@ impl HttpExecutor {
                 suggestion_note: None,
                 token_limit_field: None,
                 error_evidence: vec![],
+                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                response_compatibility: None,
+                requested_protocol: None,
+                matched_protocol: None,
             };
         }
 
@@ -280,6 +300,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: vec![],
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
         }
@@ -310,6 +334,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: vec![],
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
             Ok(BodyRead::Cancelled) => {
@@ -335,6 +363,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: vec![],
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
             Err(e) => {
@@ -360,6 +392,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: vec![],
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
         };
@@ -393,6 +429,10 @@ impl HttpExecutor {
                 suggestion_note: None,
                 token_limit_field: None,
                 error_evidence: ev,
+                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                response_compatibility: None,
+                requested_protocol: None,
+                matched_protocol: None,
             };
         }
 
@@ -426,6 +466,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: ev,
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
         }
@@ -472,6 +516,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: ev,
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
         }
@@ -524,23 +572,52 @@ impl HttpExecutor {
                 suggestion_note: None,
                 token_limit_field: None,
                 error_evidence: vec![],
+                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                response_compatibility: None,
+                requested_protocol: None,
+                matched_protocol: None,
             };
         }
 
         match super::parse::extract_response_text(req.protocol, &parsed) {
             Some(parsed_text) => {
                 let t = parsed_text.text;
-                let (ok, partial) = evaluate_text(&t);
-                let classification = if ok {
-                    if parsed_text.cross_protocol {
-                        "RESPONSE_PROTOCOL_VARIANT_OK".into()
-                    } else {
-                        "GENERATE_OK".into()
-                    }
-                } else if partial {
-                    "PARTIAL_TEXT".into()
+                let (marker_ok, marker_partial) = evaluate_text(&t);
+                use crate::protocols::types::ResponseCompatibility;
+                let compat = if parsed_text.loose_field {
+                    ResponseCompatibility::LooseField
+                } else if parsed_text.cross_protocol {
+                    ResponseCompatibility::CrossProtocol
                 } else {
-                    "UNKNOWN_ERROR".into()
+                    ResponseCompatibility::Native
+                };
+                // LooseField never counts as full success (ok=true).
+                let (ok, partial, classification) = match compat {
+                    ResponseCompatibility::Native => {
+                        if marker_ok {
+                            (true, false, "GENERATE_OK".into())
+                        } else if marker_partial {
+                            (false, true, "PARTIAL_TEXT".into())
+                        } else {
+                            (false, false, "UNKNOWN_ERROR".into())
+                        }
+                    }
+                    ResponseCompatibility::CrossProtocol => {
+                        if marker_ok {
+                            (true, false, "RESPONSE_PROTOCOL_VARIANT_OK".into())
+                        } else if marker_partial {
+                            (false, true, "PARTIAL_TEXT".into())
+                        } else {
+                            (false, false, "UNKNOWN_ERROR".into())
+                        }
+                    }
+                    ResponseCompatibility::LooseField => {
+                        if !t.trim().is_empty() {
+                            (false, true, "LOOSE_RESPONSE_TEXT_OK".into())
+                        } else {
+                            (false, false, "UNKNOWN_ERROR".into())
+                        }
+                    }
                 };
                 let suggestion_note = if parsed_text.cross_protocol {
                     Some(format!(
@@ -549,7 +626,7 @@ impl HttpExecutor {
                         super::parse::protocol_label(parsed_text.matched_protocol)
                     ))
                 } else if parsed_text.loose_field {
-                    Some("从兼容字段提取到文本".into())
+                    Some("从兼容字段提取到文本（宽松解析，不能证明当前配置协议兼容）".into())
                 } else {
                     None
                 };
@@ -574,7 +651,11 @@ impl HttpExecutor {
                     error_message: if ok {
                         None
                     } else if partial {
-                        Some("返回了有效文本但未包含 CCS_DOCTOR_OK 标记".into())
+                        if matches!(compat, ResponseCompatibility::LooseField) {
+                            Some("宽松字段解析到文本，但不能证明当前协议配置可用".into())
+                        } else {
+                            Some("返回了有效文本但未包含 CCS_DOCTOR_OK 标记".into())
+                        }
                     } else {
                         Some("响应结构成功但无文本".into())
                     },
@@ -585,6 +666,10 @@ impl HttpExecutor {
                     suggestion_note,
                     token_limit_field: None,
                     error_evidence: vec![],
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: Some(compat),
+                    requested_protocol: Some(req.protocol),
+                    matched_protocol: Some(parsed_text.matched_protocol),
                 }
             }
             None => {
@@ -615,6 +700,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: ev,
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 }
             }
         }
@@ -655,6 +744,10 @@ impl HttpExecutor {
                 suggestion_note: None,
                 token_limit_field: None,
                 error_evidence: vec![],
+                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                response_compatibility: None,
+                requested_protocol: None,
+                matched_protocol: None,
             };
         }
 
@@ -693,6 +786,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: vec![],
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
 
@@ -731,6 +828,10 @@ impl HttpExecutor {
                         suggestion_note: None,
                         token_limit_field: None,
                         error_evidence: vec![],
+                        channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                        response_compatibility: None,
+                        requested_protocol: None,
+                        matched_protocol: None,
                     };
                 }
             };
@@ -862,6 +963,10 @@ impl HttpExecutor {
                         ),
                         token_limit_field: None,
                         error_evidence: vec![],
+                        channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                        response_compatibility: None,
+                        requested_protocol: None,
+                        matched_protocol: None,
                     };
                 }
             }
@@ -887,6 +992,10 @@ impl HttpExecutor {
                 suggestion_note: None,
                 token_limit_field: None,
                 error_evidence: vec![],
+                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                response_compatibility: None,
+                requested_protocol: None,
+                matched_protocol: None,
             };
         }
         let (ok, partial) = evaluate_text(&text);
@@ -924,6 +1033,10 @@ impl HttpExecutor {
             suggestion_note: None,
             token_limit_field: None,
             error_evidence: vec![],
+            channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+            response_compatibility: None,
+            requested_protocol: None,
+            matched_protocol: None,
         }
     }
 }

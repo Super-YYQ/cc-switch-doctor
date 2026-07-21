@@ -228,6 +228,10 @@ mod tests {
             suggestion_note: None,
             token_limit_field: Some(TokenLimitField::MaxCompletionTokens),
             error_evidence: vec![],
+            channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+            response_compatibility: None,
+            requested_protocol: None,
+            matched_protocol: None,
         }
     }
 
