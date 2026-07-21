@@ -7,9 +7,7 @@ use super::types::{
     MAX_ERROR_BYTES,
 };
 use crate::ccs_adapter::ProtocolKind;
-use crate::diagnostics::classifier::{
-    classify_http_failure, classify_structured_error_envelope, classify_with_evidence,
-};
+use crate::diagnostics::classifier::{classify_structured_error_envelope, classify_with_evidence};
 use crate::security::origin::SameOriginPolicy;
 use crate::security::redact::{sanitize_url_for_display, truncate_utf8, SecretRedactor};
 use futures_util::StreamExt;
@@ -71,6 +69,10 @@ impl HttpExecutor {
                 suggestion_note: None,
                 token_limit_field: None,
                 error_evidence: vec![],
+                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                response_compatibility: None,
+                requested_protocol: None,
+                matched_protocol: None,
             };
         }
 
@@ -100,6 +102,10 @@ impl HttpExecutor {
                         suggestion_note: None,
                         token_limit_field: None,
                         error_evidence: vec![],
+                        channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                        response_compatibility: None,
+                        requested_protocol: None,
+                        matched_protocol: None,
                     },
                     redactor,
                 );
@@ -146,6 +152,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: vec![],
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
             res = send_fut => res,
@@ -188,6 +198,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: vec![],
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
         };
@@ -235,6 +249,10 @@ impl HttpExecutor {
                 suggestion_note: None,
                 token_limit_field: None,
                 error_evidence: vec![],
+                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                response_compatibility: None,
+                requested_protocol: None,
+                matched_protocol: None,
             };
         }
 
@@ -280,6 +298,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: vec![],
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
         }
@@ -310,6 +332,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: vec![],
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
             Ok(BodyRead::Cancelled) => {
@@ -335,6 +361,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: vec![],
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
             Err(e) => {
@@ -360,6 +390,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: vec![],
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
         };
@@ -393,6 +427,10 @@ impl HttpExecutor {
                 suggestion_note: None,
                 token_limit_field: None,
                 error_evidence: ev,
+                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                response_compatibility: None,
+                requested_protocol: None,
+                matched_protocol: None,
             };
         }
 
@@ -426,6 +464,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: ev,
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
         }
@@ -472,6 +514,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: ev,
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
         }
@@ -524,23 +570,52 @@ impl HttpExecutor {
                 suggestion_note: None,
                 token_limit_field: None,
                 error_evidence: vec![],
+                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                response_compatibility: None,
+                requested_protocol: None,
+                matched_protocol: None,
             };
         }
 
         match super::parse::extract_response_text(req.protocol, &parsed) {
             Some(parsed_text) => {
                 let t = parsed_text.text;
-                let (ok, partial) = evaluate_text(&t);
-                let classification = if ok {
-                    if parsed_text.cross_protocol {
-                        "RESPONSE_PROTOCOL_VARIANT_OK".into()
-                    } else {
-                        "GENERATE_OK".into()
-                    }
-                } else if partial {
-                    "PARTIAL_TEXT".into()
+                let (marker_ok, marker_partial) = evaluate_text(&t);
+                use crate::protocols::types::ResponseCompatibility;
+                let compat = if parsed_text.loose_field {
+                    ResponseCompatibility::LooseField
+                } else if parsed_text.cross_protocol {
+                    ResponseCompatibility::CrossProtocol
                 } else {
-                    "UNKNOWN_ERROR".into()
+                    ResponseCompatibility::Native
+                };
+                // LooseField never counts as full success (ok=true).
+                let (ok, partial, classification) = match compat {
+                    ResponseCompatibility::Native => {
+                        if marker_ok {
+                            (true, false, "GENERATE_OK".into())
+                        } else if marker_partial {
+                            (false, true, "PARTIAL_TEXT".into())
+                        } else {
+                            (false, false, "UNKNOWN_ERROR".into())
+                        }
+                    }
+                    ResponseCompatibility::CrossProtocol => {
+                        if marker_ok {
+                            (true, false, "RESPONSE_PROTOCOL_VARIANT_OK".into())
+                        } else if marker_partial {
+                            (false, true, "PARTIAL_TEXT".into())
+                        } else {
+                            (false, false, "UNKNOWN_ERROR".into())
+                        }
+                    }
+                    ResponseCompatibility::LooseField => {
+                        if !t.trim().is_empty() {
+                            (false, true, "LOOSE_RESPONSE_TEXT_OK".into())
+                        } else {
+                            (false, false, "UNKNOWN_ERROR".into())
+                        }
+                    }
                 };
                 let suggestion_note = if parsed_text.cross_protocol {
                     Some(format!(
@@ -549,7 +624,7 @@ impl HttpExecutor {
                         super::parse::protocol_label(parsed_text.matched_protocol)
                     ))
                 } else if parsed_text.loose_field {
-                    Some("从兼容字段提取到文本".into())
+                    Some("从兼容字段提取到文本（宽松解析，不能证明当前配置协议兼容）".into())
                 } else {
                     None
                 };
@@ -574,7 +649,11 @@ impl HttpExecutor {
                     error_message: if ok {
                         None
                     } else if partial {
-                        Some("返回了有效文本但未包含 CCS_DOCTOR_OK 标记".into())
+                        if matches!(compat, ResponseCompatibility::LooseField) {
+                            Some("宽松字段解析到文本，但不能证明当前协议配置可用".into())
+                        } else {
+                            Some("返回了有效文本但未包含 CCS_DOCTOR_OK 标记".into())
+                        }
                     } else {
                         Some("响应结构成功但无文本".into())
                     },
@@ -585,6 +664,10 @@ impl HttpExecutor {
                     suggestion_note,
                     token_limit_field: None,
                     error_evidence: vec![],
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: Some(compat),
+                    requested_protocol: Some(req.protocol),
+                    matched_protocol: Some(parsed_text.matched_protocol),
                 }
             }
             None => {
@@ -615,6 +698,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: ev,
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 }
             }
         }
@@ -630,9 +717,144 @@ impl HttpExecutor {
         cancel: &CancellationToken,
     ) -> AttemptResult {
         let status_code = response.status().as_u16();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let content_length = response
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<usize>().ok());
+        let ct_ref = content_type.as_deref();
+
         if !response.status().is_success() {
-            let body = response.text().await.unwrap_or_default();
+            // Bounded read for non-2xx stream bodies (never response.text())
+            if let Some(cl) = content_length {
+                if cl > MAX_BODY_BYTES {
+                    return AttemptResult {
+                        ok: false,
+                        partial: false,
+                        status_code: Some(status_code),
+                        latency_ms: started.elapsed().as_millis() as u64,
+                        ttft_ms: None,
+                        protocol: req.protocol,
+                        model: req.model.clone(),
+                        url: safe_url,
+                        stream: true,
+                        purpose: req.purpose,
+                        extracted_text: None,
+                        tool_call_ok: None,
+                        error_kind: Some("body".into()),
+                        error_message: Some("错误响应体 Content-Length 超过 2MB 限制".into()),
+                        response_excerpt: None,
+                        classification: "RESPONSE_BODY_TOO_LARGE".into(),
+                        http_sent: true,
+                        reused_from_cache: false,
+                        suggestion_note: None,
+                        token_limit_field: None,
+                        error_evidence: vec![],
+                        channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                        response_compatibility: None,
+                        requested_protocol: Some(req.protocol),
+                        matched_protocol: None,
+                    };
+                }
+            }
+            let body_bytes = match read_body_bounded(response, MAX_BODY_BYTES, cancel).await {
+                Ok(BodyRead::Bytes(b)) => b,
+                Ok(BodyRead::TooLarge) => {
+                    return AttemptResult {
+                        ok: false,
+                        partial: false,
+                        status_code: Some(status_code),
+                        latency_ms: started.elapsed().as_millis() as u64,
+                        ttft_ms: None,
+                        protocol: req.protocol,
+                        model: req.model.clone(),
+                        url: safe_url,
+                        stream: true,
+                        purpose: req.purpose,
+                        extracted_text: None,
+                        tool_call_ok: None,
+                        error_kind: Some("body".into()),
+                        error_message: Some("错误响应体超过 2MB 限制（增量读取已中止）".into()),
+                        response_excerpt: None,
+                        classification: "RESPONSE_BODY_TOO_LARGE".into(),
+                        http_sent: true,
+                        reused_from_cache: false,
+                        suggestion_note: None,
+                        token_limit_field: None,
+                        error_evidence: vec![],
+                        channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                        response_compatibility: None,
+                        requested_protocol: Some(req.protocol),
+                        matched_protocol: None,
+                    };
+                }
+                Ok(BodyRead::Cancelled) => {
+                    return AttemptResult {
+                        ok: false,
+                        partial: false,
+                        status_code: Some(status_code),
+                        latency_ms: started.elapsed().as_millis() as u64,
+                        ttft_ms: None,
+                        protocol: req.protocol,
+                        model: req.model.clone(),
+                        url: safe_url,
+                        stream: true,
+                        purpose: req.purpose,
+                        extracted_text: None,
+                        tool_call_ok: None,
+                        error_kind: Some("cancelled".into()),
+                        error_message: Some("已取消".into()),
+                        response_excerpt: None,
+                        classification: "CANCELLED".into(),
+                        http_sent: true,
+                        reused_from_cache: false,
+                        suggestion_note: None,
+                        token_limit_field: None,
+                        error_evidence: vec![],
+                        channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                        response_compatibility: None,
+                        requested_protocol: Some(req.protocol),
+                        matched_protocol: None,
+                    };
+                }
+                Err(e) => {
+                    return AttemptResult {
+                        ok: false,
+                        partial: false,
+                        status_code: Some(status_code),
+                        latency_ms: started.elapsed().as_millis() as u64,
+                        ttft_ms: None,
+                        protocol: req.protocol,
+                        model: req.model.clone(),
+                        url: safe_url,
+                        stream: true,
+                        purpose: req.purpose,
+                        extracted_text: None,
+                        tool_call_ok: None,
+                        error_kind: Some("network".into()),
+                        error_message: Some(redactor.redact(&e)),
+                        response_excerpt: None,
+                        classification: "NETWORK_UNREACHABLE".into(),
+                        http_sent: true,
+                        reused_from_cache: false,
+                        suggestion_note: None,
+                        token_limit_field: None,
+                        error_evidence: vec![],
+                        channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                        response_compatibility: None,
+                        requested_protocol: Some(req.protocol),
+                        matched_protocol: None,
+                    };
+                }
+            };
+            let body = String::from_utf8_lossy(&body_bytes).to_string();
             let excerpt = truncate(&redactor.redact(&body), MAX_ERROR_BYTES);
+            let (classification, ev) = classify_with_evidence(status_code, &body, ct_ref);
             return AttemptResult {
                 ok: false,
                 partial: false,
@@ -649,21 +871,30 @@ impl HttpExecutor {
                 error_kind: Some("http".into()),
                 error_message: Some(excerpt.clone()),
                 response_excerpt: Some(excerpt),
-                classification: classify_http_failure(status_code, &body),
+                classification,
                 http_sent: true,
                 reused_from_cache: false,
                 suggestion_note: None,
                 token_limit_field: None,
-                error_evidence: vec![],
+                error_evidence: ev,
+                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                response_compatibility: None,
+                requested_protocol: Some(req.protocol),
+                matched_protocol: None,
             };
         }
 
         let mut stream = response.bytes_stream();
-        let mut buf = String::new();
+        let mut line_buffer = String::new();
+        // Full bounded buffer for final fallback parse (max 2MB)
+        let mut raw_bounded_buffer = String::new();
         let mut text = String::new();
         let mut ttft: Option<u64> = None;
         let mut total_bytes = 0usize;
         let mut saw_done = false;
+        let mut body_too_large = false;
+        let mut stream_matched_protocol: Option<ProtocolKind> = None;
+        let mut stream_cross = false;
 
         loop {
             if cancel.is_cancelled() {
@@ -693,6 +924,10 @@ impl HttpExecutor {
                     suggestion_note: None,
                     token_limit_field: None,
                     error_evidence: vec![],
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: None,
+                    matched_protocol: None,
                 };
             }
 
@@ -731,45 +966,55 @@ impl HttpExecutor {
                         suggestion_note: None,
                         token_limit_field: None,
                         error_evidence: vec![],
+                        channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                        response_compatibility: None,
+                        requested_protocol: None,
+                        matched_protocol: None,
                     };
                 }
             };
             total_bytes += chunk.len();
             if total_bytes > MAX_BODY_BYTES {
+                body_too_large = true;
                 break;
             }
-            buf.push_str(&String::from_utf8_lossy(&chunk));
+            let chunk_str = String::from_utf8_lossy(&chunk);
+            if raw_bounded_buffer.len() < MAX_BODY_BYTES {
+                let remain = MAX_BODY_BYTES - raw_bounded_buffer.len();
+                raw_bounded_buffer.push_str(&chunk_str[..chunk_str.len().min(remain)]);
+            }
+            line_buffer.push_str(&chunk_str);
 
-            while let Some(pos) = buf.find('\n') {
-                let mut line = buf[..pos].to_string();
-                buf = buf[pos + 1..].to_string();
+            while let Some(pos) = line_buffer.find('\n') {
+                let mut line = line_buffer[..pos].to_string();
+                line_buffer = line_buffer[pos + 1..].to_string();
                 if line.ends_with('\r') {
                     line.pop();
                 }
                 if line.is_empty() {
                     continue;
                 }
-                if let Some(data) = line.strip_prefix("data:") {
-                    let data = data.trim();
-                    if data == "[DONE]" {
-                        saw_done = true;
-                        continue;
+                // Accept both SSE `data:` and bare NDJSON lines
+                let data = line
+                    .strip_prefix("data:")
+                    .map(|s| s.trim())
+                    .unwrap_or(line.trim());
+                if data.is_empty() {
+                    continue;
+                }
+                if data == "[DONE]" {
+                    saw_done = true;
+                    continue;
+                }
+                let (delta, matched, cross) = extract_stream_delta_layered(req.protocol, data);
+                if let Some(d) = delta {
+                    if ttft.is_none() {
+                        ttft = Some(started.elapsed().as_millis() as u64);
                     }
-                    let delta = match req.protocol {
-                        ProtocolKind::OpenAiChat => extract_chat_stream_delta(data),
-                        ProtocolKind::OpenAiResponses => extract_responses_stream_event(data),
-                        ProtocolKind::AnthropicMessages => extract_anthropic_stream_delta(data),
-                        ProtocolKind::GeminiNative => {
-                            // Gemini SSE may send full JSON chunks
-                            extract_gemini_text(&serde_json::from_str(data).unwrap_or_default())
-                        }
-                        ProtocolKind::Unknown => None,
-                    };
-                    if let Some(d) = delta {
-                        if ttft.is_none() {
-                            ttft = Some(started.elapsed().as_millis() as u64);
-                        }
-                        text.push_str(&d);
+                    text.push_str(&d);
+                    if stream_matched_protocol.is_none() {
+                        stream_matched_protocol = matched;
+                        stream_cross = cross;
                     }
                 }
             }
@@ -779,12 +1024,42 @@ impl HttpExecutor {
         }
 
         let latency_ms = started.elapsed().as_millis() as u64;
+        if body_too_large && text.is_empty() {
+            return AttemptResult {
+                ok: false,
+                partial: false,
+                status_code: Some(status_code),
+                latency_ms,
+                ttft_ms: ttft,
+                protocol: req.protocol,
+                model: req.model.clone(),
+                url: safe_url,
+                stream: true,
+                purpose: req.purpose,
+                extracted_text: None,
+                tool_call_ok: None,
+                error_kind: Some("body".into()),
+                error_message: Some("流式响应体超过 2MB 限制".into()),
+                response_excerpt: None,
+                classification: "RESPONSE_BODY_TOO_LARGE".into(),
+                http_sent: true,
+                reused_from_cache: false,
+                suggestion_note: None,
+                token_limit_field: None,
+                error_evidence: vec![],
+                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                response_compatibility: None,
+                requested_protocol: Some(req.protocol),
+                matched_protocol: None,
+            };
+        }
         if text.is_empty() {
-            // Fallback: upstream ignored stream=true and returned a full JSON body
-            let full = buf.trim();
+            // Fallback using the full bounded buffer (SSE ignored stream=true / NDJSON / full JSON)
+            let full = raw_bounded_buffer.trim();
             if !full.is_empty() {
-                // Try NDJSON: each non-empty line is a JSON object
-                let mut ndjson_text = String::new();
+                let mut recovered = String::new();
+                let mut matched = None;
+                let mut cross = false;
                 for line in full.lines() {
                     let line = line.trim();
                     if line.is_empty() || line == "[DONE]" {
@@ -796,36 +1071,41 @@ impl HttpExecutor {
                     }
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
                         if let Some(p) = super::parse::extract_response_text(req.protocol, &v) {
-                            ndjson_text.push_str(&p.text);
-                        } else {
-                            // stream delta extractors
-                            let delta = match req.protocol {
-                                ProtocolKind::OpenAiChat => extract_chat_stream_delta(data),
-                                ProtocolKind::OpenAiResponses => {
-                                    extract_responses_stream_event(data)
-                                }
-                                ProtocolKind::AnthropicMessages => {
-                                    extract_anthropic_stream_delta(data)
-                                }
-                                ProtocolKind::GeminiNative => extract_gemini_text(&v),
-                                ProtocolKind::Unknown => None,
-                            };
-                            if let Some(d) = delta {
-                                ndjson_text.push_str(&d);
-                            }
+                            recovered.push_str(&p.text);
+                            matched = Some(p.matched_protocol);
+                            cross = p.cross_protocol;
+                            continue;
                         }
                     }
+                    let (delta, m, c) = extract_stream_delta_layered(req.protocol, data);
+                    if let Some(d) = delta {
+                        recovered.push_str(&d);
+                        matched = m;
+                        cross = c;
+                    }
                 }
-                if ndjson_text.is_empty() {
-                    // Single full JSON body
+                if recovered.is_empty() {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(full) {
                         if let Some(p) = super::parse::extract_response_text(req.protocol, &v) {
-                            ndjson_text = p.text;
+                            recovered = p.text;
+                            matched = Some(p.matched_protocol);
+                            cross = p.cross_protocol;
                         }
                     }
                 }
-                if !ndjson_text.is_empty() {
-                    let (ok, partial) = evaluate_text(&ndjson_text);
+                if !recovered.is_empty() {
+                    let (ok, partial) = evaluate_text(&recovered);
+                    let classification = if ok {
+                        if cross {
+                            "STREAM_PROTOCOL_VARIANT_OK".into()
+                        } else {
+                            "STREAM_OK".into()
+                        }
+                    } else if partial {
+                        "PARTIAL_TEXT".into()
+                    } else {
+                        "STREAMING_UNSUPPORTED".into()
+                    };
                     return AttemptResult {
                         ok,
                         partial,
@@ -837,7 +1117,7 @@ impl HttpExecutor {
                         url: safe_url,
                         stream: true,
                         purpose: req.purpose,
-                        extracted_text: Some(redactor.redact(&ndjson_text)),
+                        extracted_text: Some(redactor.redact(&recovered)),
                         tool_call_ok: None,
                         error_kind: None,
                         error_message: if ok {
@@ -848,13 +1128,7 @@ impl HttpExecutor {
                             None
                         },
                         response_excerpt: None,
-                        classification: if ok {
-                            "STREAM_OK".into()
-                        } else if partial {
-                            "PARTIAL_TEXT".into()
-                        } else {
-                            "STREAMING_UNSUPPORTED".into()
-                        },
+                        classification,
                         http_sent: true,
                         reused_from_cache: false,
                         suggestion_note: Some(
@@ -862,6 +1136,14 @@ impl HttpExecutor {
                         ),
                         token_limit_field: None,
                         error_evidence: vec![],
+                        channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                        response_compatibility: Some(if cross {
+                            crate::protocols::types::ResponseCompatibility::CrossProtocol
+                        } else {
+                            crate::protocols::types::ResponseCompatibility::Native
+                        }),
+                        requested_protocol: Some(req.protocol),
+                        matched_protocol: matched,
                     };
                 }
             }
@@ -880,16 +1162,31 @@ impl HttpExecutor {
                 tool_call_ok: None,
                 error_kind: Some("stream".into()),
                 error_message: Some("流式响应未解析到文本增量".into()),
-                response_excerpt: Some(truncate(&redactor.redact(&buf), 512)),
+                response_excerpt: Some(truncate(&redactor.redact(&raw_bounded_buffer), 512)),
                 classification: "STREAMING_UNSUPPORTED".into(),
                 http_sent: true,
                 reused_from_cache: false,
                 suggestion_note: None,
                 token_limit_field: None,
                 error_evidence: vec![],
+                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                response_compatibility: None,
+                requested_protocol: Some(req.protocol),
+                matched_protocol: None,
             };
         }
         let (ok, partial) = evaluate_text(&text);
+        let classification = if ok {
+            if stream_cross {
+                "STREAM_PROTOCOL_VARIANT_OK".into()
+            } else {
+                "STREAM_OK".into()
+            }
+        } else if partial {
+            "PARTIAL_TEXT".into()
+        } else {
+            "STREAMING_UNSUPPORTED".into()
+        };
         AttemptResult {
             ok,
             partial,
@@ -912,24 +1209,90 @@ impl HttpExecutor {
                 None
             },
             response_excerpt: None,
-            classification: if ok {
-                "STREAM_OK".into()
-            } else if partial {
-                "PARTIAL_TEXT".into()
-            } else {
-                "STREAMING_UNSUPPORTED".into()
-            },
+            classification,
             http_sent: true,
             reused_from_cache: false,
-            suggestion_note: None,
+            suggestion_note: if stream_cross {
+                Some("流式跨协议解析成功".into())
+            } else {
+                None
+            },
             token_limit_field: None,
             error_evidence: vec![],
+            channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+            response_compatibility: Some(if stream_cross {
+                crate::protocols::types::ResponseCompatibility::CrossProtocol
+            } else {
+                crate::protocols::types::ResponseCompatibility::Native
+            }),
+            requested_protocol: Some(req.protocol),
+            matched_protocol: stream_matched_protocol.or(Some(req.protocol)),
         }
     }
 }
 
 fn truncate(s: &str, max: usize) -> String {
     truncate_utf8(s, max)
+}
+
+/// Layered stream delta extraction: native protocol first, then other protocols.
+fn extract_stream_delta_layered(
+    target: ProtocolKind,
+    data: &str,
+) -> (Option<String>, Option<ProtocolKind>, bool) {
+    let order: &[ProtocolKind] = match target {
+        ProtocolKind::OpenAiChat => &[
+            ProtocolKind::OpenAiChat,
+            ProtocolKind::OpenAiResponses,
+            ProtocolKind::AnthropicMessages,
+            ProtocolKind::GeminiNative,
+        ],
+        ProtocolKind::OpenAiResponses => &[
+            ProtocolKind::OpenAiResponses,
+            ProtocolKind::OpenAiChat,
+            ProtocolKind::AnthropicMessages,
+            ProtocolKind::GeminiNative,
+        ],
+        ProtocolKind::AnthropicMessages => &[
+            ProtocolKind::AnthropicMessages,
+            ProtocolKind::OpenAiChat,
+            ProtocolKind::OpenAiResponses,
+            ProtocolKind::GeminiNative,
+        ],
+        ProtocolKind::GeminiNative => &[
+            ProtocolKind::GeminiNative,
+            ProtocolKind::OpenAiChat,
+            ProtocolKind::AnthropicMessages,
+            ProtocolKind::OpenAiResponses,
+        ],
+        ProtocolKind::Unknown => &[
+            ProtocolKind::OpenAiChat,
+            ProtocolKind::OpenAiResponses,
+            ProtocolKind::AnthropicMessages,
+            ProtocolKind::GeminiNative,
+        ],
+    };
+    for kind in order {
+        let delta = match kind {
+            ProtocolKind::OpenAiChat => extract_chat_stream_delta(data),
+            ProtocolKind::OpenAiResponses => extract_responses_stream_event(data),
+            ProtocolKind::AnthropicMessages => extract_anthropic_stream_delta(data),
+            ProtocolKind::GeminiNative => {
+                extract_gemini_text(&serde_json::from_str(data).unwrap_or_default())
+            }
+            ProtocolKind::Unknown => None,
+        };
+        if let Some(d) = delta {
+            return (Some(d), Some(*kind), *kind != target);
+        }
+    }
+    // Full JSON event fallback
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+        if let Some(p) = super::parse::extract_response_text(target, &v) {
+            return (Some(p.text), Some(p.matched_protocol), p.cross_protocol);
+        }
+    }
+    (None, None, false)
 }
 
 enum BodyRead {

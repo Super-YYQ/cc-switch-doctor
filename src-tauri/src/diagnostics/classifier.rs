@@ -37,6 +37,45 @@ pub fn classify_http_failure(status: u16, body: &str) -> String {
     classify_with_evidence(status, body, None).0
 }
 
+/// True only for a clearly non-empty error payload.
+/// `null` / `false` / `""` / `{}` / `[]` are NOT errors (common success placeholders).
+pub fn is_meaningful_error_value(err: &serde_json::Value) -> bool {
+    match err {
+        serde_json::Value::Null => false,
+        serde_json::Value::Bool(b) => *b,
+        serde_json::Value::String(s) => !s.trim().is_empty(),
+        serde_json::Value::Number(_) => true,
+        serde_json::Value::Array(arr) => !arr.is_empty(),
+        serde_json::Value::Object(map) => {
+            if map.is_empty() {
+                return false;
+            }
+            // Meaningful if any of message/code/type/msg is a non-empty string/number,
+            // or the object has any non-null non-false content.
+            for key in ["message", "msg", "code", "type", "error"] {
+                if let Some(v) = map.get(key) {
+                    match v {
+                        serde_json::Value::String(s) if !s.trim().is_empty() => return true,
+                        serde_json::Value::Number(_) => return true,
+                        serde_json::Value::Bool(true) => return true,
+                        serde_json::Value::Object(o) if !o.is_empty() => return true,
+                        serde_json::Value::Array(a) if !a.is_empty() => return true,
+                        _ => {}
+                    }
+                }
+            }
+            // Fall back: any non-null/non-false leaf counts
+            map.values().any(|v| match v {
+                serde_json::Value::Null | serde_json::Value::Bool(false) => false,
+                serde_json::Value::String(s) => !s.trim().is_empty(),
+                serde_json::Value::Array(a) => !a.is_empty(),
+                serde_json::Value::Object(o) => !o.is_empty(),
+                _ => true,
+            })
+        }
+    }
+}
+
 /// Detect an explicit 2xx business-error envelope (not free-text keywords).
 /// Returns (classification, evidence) only when structure is clearly an error.
 pub fn classify_structured_error_envelope(
@@ -44,36 +83,39 @@ pub fn classify_structured_error_envelope(
     body: &str,
     parsed: &serde_json::Value,
 ) -> Option<(String, Vec<ErrorEvidence>)> {
-    // Top-level {"error": ...}
+    // Top-level {"error": ...} — only when meaningful
     if let Some(err) = parsed.get("error") {
-        let msg = err
-            .get("message")
-            .and_then(|v| v.as_str())
-            .or_else(|| err.as_str())
-            .unwrap_or("")
-            .to_string();
-        let code = err.get("code").and_then(|v| {
-            v.as_str()
-                .map(|s| s.to_string())
-                .or_else(|| v.as_i64().map(|n| n.to_string()))
-        });
-        let (cls, mut evidence) = classify_with_evidence(status, body, None);
-        if evidence.is_empty() {
-            evidence.push(ErrorEvidence {
-                source: "error_envelope".into(),
-                code: code.clone().or_else(|| Some(status.to_string())),
-                message: if msg.is_empty() { None } else { Some(msg) },
-                matched_keyword: None,
+        if is_meaningful_error_value(err) {
+            let msg = err
+                .get("message")
+                .and_then(|v| v.as_str())
+                .or_else(|| err.as_str())
+                .unwrap_or("")
+                .to_string();
+            let code = err.get("code").and_then(|v| {
+                v.as_str()
+                    .map(|s| s.to_string())
+                    .or_else(|| v.as_i64().map(|n| n.to_string()))
             });
-        } else {
-            for e in &mut evidence {
-                e.source = "error_envelope".into();
-                if e.message.is_none() && !msg.is_empty() {
-                    e.message = Some(msg.clone());
+            let (cls, mut evidence) = classify_with_evidence(status, body, None);
+            if evidence.is_empty() {
+                evidence.push(ErrorEvidence {
+                    source: "error_envelope".into(),
+                    code: code.clone().or_else(|| Some(status.to_string())),
+                    message: if msg.is_empty() { None } else { Some(msg) },
+                    matched_keyword: None,
+                });
+            } else {
+                for e in &mut evidence {
+                    e.source = "error_envelope".into();
+                    if e.message.is_none() && !msg.is_empty() {
+                        e.message = Some(msg.clone());
+                    }
                 }
             }
+            return Some((cls, evidence));
         }
-        return Some((cls, evidence));
+        // error:null / false / "" / {} / [] — not an envelope; continue
     }
 
     // {"success": false, ...} / {"ok": false, ...} / {"status": "error", ...}
@@ -113,7 +155,6 @@ pub fn classify_structured_error_envelope(
                 e.source = "structured_flag".into();
             }
         }
-        // Prefer a real classification over UNKNOWN when flag is explicitly false
         let cls = if cls == "UNKNOWN_ERROR" {
             "UNKNOWN_ERROR".into()
         } else {
@@ -372,6 +413,15 @@ pub fn final_status_from_attempts(
         if needs_local_routing {
             return "LOCAL_ROUTING_REQUIRED".into();
         }
+        // Cross-protocol success is not CURRENT_CONFIG_OK
+        if best_classification == "RESPONSE_PROTOCOL_VARIANT_OK"
+            || best_classification == "DIRECT_PROTOCOL_VARIANT_OK"
+        {
+            return "DIRECT_PROTOCOL_VARIANT_OK".into();
+        }
+        if best_classification == "LOOSE_RESPONSE_TEXT_OK" {
+            return "LOOSE_RESPONSE_TEXT_OK".into();
+        }
         if protocol_changed {
             return "PROTOCOL_FALLBACK_OK".into();
         }
@@ -498,5 +548,66 @@ mod tests {
         let body = r#"{"content":[{"type":"text","text":"ok"}],"usage":{"billing_usage":{}}}"#;
         let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
         assert!(classify_structured_error_envelope(200, body, &parsed).is_none());
+    }
+
+    #[test]
+    fn error_null_is_not_envelope() {
+        let body = r#"{"error":null,"content":[{"type":"text","text":"CCS_DOCTOR_OK"}]}"#;
+        let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert!(classify_structured_error_envelope(200, body, &parsed).is_none());
+    }
+
+    #[test]
+    fn error_empty_object_is_not_envelope() {
+        let body = r#"{"error":{},"choices":[{"message":{"content":"CCS_DOCTOR_OK"}}]}"#;
+        let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert!(classify_structured_error_envelope(200, body, &parsed).is_none());
+    }
+
+    #[test]
+    fn error_false_and_empty_string_not_envelope() {
+        for body in [
+            r#"{"error":false,"content":[{"type":"text","text":"ok"}]}"#,
+            r#"{"error":"","content":[{"type":"text","text":"ok"}]}"#,
+            r#"{"error":[],"content":[{"type":"text","text":"ok"}]}"#,
+        ] {
+            let parsed: serde_json::Value = serde_json::from_str(body).unwrap();
+            assert!(
+                classify_structured_error_envelope(200, body, &parsed).is_none(),
+                "body={body}"
+            );
+        }
+    }
+
+    #[test]
+    fn final_status_prefers_variant_over_current() {
+        assert_eq!(
+            final_status_from_attempts(
+                false,
+                true,
+                "RESPONSE_PROTOCOL_VARIANT_OK",
+                false,
+                false,
+                false,
+                false
+            ),
+            "DIRECT_PROTOCOL_VARIANT_OK"
+        );
+        assert_eq!(
+            final_status_from_attempts(true, true, "GENERATE_OK", false, false, false, false),
+            "CURRENT_CONFIG_OK"
+        );
+        assert_eq!(
+            final_status_from_attempts(
+                false,
+                true,
+                "LOOSE_RESPONSE_TEXT_OK",
+                false,
+                false,
+                false,
+                false
+            ),
+            "LOOSE_RESPONSE_TEXT_OK"
+        );
     }
 }

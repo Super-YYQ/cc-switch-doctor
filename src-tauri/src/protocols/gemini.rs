@@ -145,8 +145,10 @@ fn append_query(url: &str, key: &str, value: &str) -> String {
 }
 
 pub fn extract_gemini_text(value: &serde_json::Value) -> Option<String> {
-    if value.get("error").is_some() {
-        return None;
+    if let Some(err) = value.get("error") {
+        if crate::diagnostics::classifier::is_meaningful_error_value(err) {
+            return None;
+        }
     }
     let cands = value.get("candidates")?.as_array()?;
     let mut out = String::new();

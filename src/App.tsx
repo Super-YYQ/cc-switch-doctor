@@ -20,6 +20,7 @@ import type {
   ProviderListItem,
   ProviderScanView,
   UpdateStatus,
+  VerifyMode,
 } from "@/types";
 import { AppHeader } from "@/components/AppHeader";
 import { SessionControlBar } from "@/components/SessionControlBar";
@@ -107,6 +108,7 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [mode, setMode] = useState<DiagnosisMode>("smart");
   const [concurrency, setConcurrency] = useState(1);
+  const [verifyMode, setVerifyMode] = useState<VerifyMode>("auto");
   const [stopping, setStopping] = useState(false);
   const activeRunIdRef = useRef<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -147,7 +149,7 @@ export default function App() {
     try {
       if (!isTauri()) {
         applyFreshScan(DEMO_SCAN);
-        setAppInfo({ name: "CC Switch Doctor", version: "0.1.4", doctorVersion: "0.1.4" });
+        setAppInfo({ name: "CC Switch Doctor", version: "0.1.6", doctorVersion: "0.1.6" });
         if (!hideSafetySession) setSafetyOpen(true);
         return;
       }
@@ -348,6 +350,7 @@ export default function App() {
         opaqueIds: ids,
         mode,
         concurrency,
+        verifyMode,
       });
       activeRunIdRef.current = id;
       setRunId(id);
@@ -405,7 +408,7 @@ export default function App() {
     try {
       if (!isTauri()) {
         setUpdates({
-          doctorVersion: "0.1.4",
+          doctorVersion: "0.1.6",
           doctorUpdateAvailable: false,
           verifiedCcSwitch: "3.17.0",
           message: "开发预览：更新检查需在应用内执行",
@@ -463,8 +466,11 @@ export default function App() {
         currentName={currentName}
         disabledStart={running || selectedCount === 0 || !scan?.canTest}
         stopping={stopping}
+        verifyMode={verifyMode}
+        routing={scan?.routing}
         onMode={setMode}
         onConcurrency={setConcurrency}
+        onVerifyMode={setVerifyMode}
         onStart={() => void onStart()}
         onCancel={() => void onCancel()}
       />
@@ -503,22 +509,34 @@ export default function App() {
           onQuery={setQuery}
           onOnlySelected={setOnlySelected}
           onToggle={toggle}
-          onActivate={setActiveId}
+          onActivate={(id) => {
+            setActiveId(id);
+            // Scroll result into view without changing checkbox selection
+            window.requestAnimationFrame(() => {
+              document
+                .getElementById(`result-${id}`)
+                ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            });
+          }}
           onSelectFiltered={selectFiltered}
           onClearSelection={() => setSelected(new Set())}
           onSelectCurrent={() => setSelected(defaultSelectedIds(providers))}
         />
         <DiagnosisWorkspace
-          summaries={
-            activeId
-              ? summaries
-                  .filter((s) => s.opaqueId === activeId)
-                  .concat(summaries.filter((s) => s.opaqueId !== activeId))
-              : summaries
-          }
+          summaries={summaries}
+          activeId={activeId}
+          providers={providers}
           running={running}
           liveLog={liveLog}
           onCopy={onCopy}
+          onActivateProvider={(id) => {
+            setActiveId(id);
+            window.requestAnimationFrame(() => {
+              document
+                .getElementById(`provider-${id}`)
+                ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            });
+          }}
         />
       </div>
 

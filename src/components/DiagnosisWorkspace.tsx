@@ -1,14 +1,17 @@
 import { Stethoscope } from "lucide-react";
-import type { ProviderDiagnosisSummary } from "@/types";
+import type { ProviderDiagnosisSummary, ProviderListItem } from "@/types";
 import { ResultCard } from "./ResultCard";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { statusBadge } from "@/lib/utils";
 
 interface Props {
   summaries: ProviderDiagnosisSummary[];
+  activeId: string | null;
+  providers: ProviderListItem[];
   running: boolean;
   liveLog: string[];
   onCopy: (text: string, label: string) => void;
+  onActivateProvider: (id: string) => void;
 }
 
 type Filter = "all" | "needs" | "fail" | "ok" | "skip";
@@ -21,14 +24,40 @@ function priority(s: ProviderDiagnosisSummary): number {
   return 3;
 }
 
-export function DiagnosisWorkspace({ summaries, running, liveLog, onCopy }: Props) {
+export function DiagnosisWorkspace({
+  summaries,
+  activeId,
+  providers,
+  running,
+  liveLog,
+  onCopy,
+  onActivateProvider,
+}: Props) {
   const [filter, setFilter] = useState<Filter>("all");
   const [showLog, setShowLog] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const userNavRef = useRef(false);
 
-  const sorted = useMemo(
-    () => [...summaries].sort((a, b) => priority(a) - priority(b)),
-    [summaries],
-  );
+  // Keep left-provider order when possible
+  const ordered = useMemo(() => {
+    const byId = new Map(summaries.map((s) => [s.opaqueId, s]));
+    const leftOrder = providers.map((p) => p.opaqueId);
+    const out: ProviderDiagnosisSummary[] = [];
+    for (const id of leftOrder) {
+      const s = byId.get(id);
+      if (s) out.push(s);
+    }
+    for (const s of summaries) {
+      if (!out.some((x) => x.opaqueId === s.opaqueId)) out.push(s);
+    }
+    return out;
+  }, [summaries, providers]);
+
+  const sorted = useMemo(() => {
+    // Default: provider list order; only re-prioritize when filter is not all
+    if (filter === "all") return ordered;
+    return [...ordered].sort((a, b) => priority(a) - priority(b));
+  }, [ordered, filter]);
 
   const filtered = sorted.filter((s) => {
     const k = statusBadge(s.status).kind;
@@ -52,6 +81,28 @@ export function DiagnosisWorkspace({ summaries, running, liveLog, onCopy }: Prop
     }
     return { ok, needs, fail };
   }, [summaries]);
+
+  useEffect(() => {
+    if (!activeId || !userNavRef.current) return;
+    const el = document.getElementById(`result-${activeId}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    userNavRef.current = false;
+  }, [activeId, filtered]);
+
+  function jumpTo(id: string) {
+    userNavRef.current = true;
+    onActivateProvider(id);
+  }
+
+  function jumpRelative(delta: number) {
+    if (!filtered.length) return;
+    const idx = Math.max(
+      0,
+      filtered.findIndex((s) => s.opaqueId === activeId),
+    );
+    const next = filtered[(idx + delta + filtered.length) % filtered.length];
+    jumpTo(next.opaqueId);
+  }
 
   return (
     <section className="panel workspace-pane" style={{ padding: 12 }}>
@@ -90,6 +141,51 @@ export function DiagnosisWorkspace({ summaries, running, liveLog, onCopy }: Prop
         )}
       </div>
 
+      {!!summaries.length && (
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            alignItems: "center",
+            marginBottom: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <label className="muted" style={{ fontSize: 12 }}>
+            当前结果：
+            <select
+              value={activeId ?? ""}
+              onChange={(e) => {
+                if (e.target.value) jumpTo(e.target.value);
+              }}
+              style={{
+                marginLeft: 4,
+                height: 28,
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--bg-elevated)",
+                color: "var(--text)",
+                fontSize: 12,
+                maxWidth: 220,
+              }}
+            >
+              <option value="">选择 Provider</option>
+              {filtered.map((s) => (
+                <option key={s.opaqueId} value={s.opaqueId}>
+                  {statusBadge(s.status).zh} · {s.appLabel}/{s.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="button" className="btn btn-sm" onClick={() => jumpRelative(-1)}>
+            上一条
+          </button>
+          <button type="button" className="btn btn-sm" onClick={() => jumpRelative(1)}>
+            下一条
+          </button>
+        </div>
+      )}
+
       {!!summaries.length && !running && (
         <div
           className="muted"
@@ -107,7 +203,7 @@ export function DiagnosisWorkspace({ summaries, running, liveLog, onCopy }: Prop
         </div>
       )}
 
-      <div className="workspace-scroll">
+      <div className="workspace-scroll" ref={scrollRef}>
         {!summaries.length && !running && (
           <div className="empty-state">
             <div className="icon">
@@ -125,7 +221,18 @@ export function DiagnosisWorkspace({ summaries, running, liveLog, onCopy }: Prop
         )}
 
         {filtered.map((s) => (
-          <ResultCard key={s.opaqueId} summary={s} onCopy={onCopy} />
+          <div
+            key={s.opaqueId}
+            id={`result-${s.opaqueId}`}
+            onClick={() => jumpTo(s.opaqueId)}
+            style={{
+              outline: activeId === s.opaqueId ? "2px solid var(--primary)" : undefined,
+              borderRadius: 12,
+              marginBottom: 2,
+            }}
+          >
+            <ResultCard summary={s} onCopy={onCopy} />
+          </div>
         ))}
       </div>
 

@@ -50,13 +50,80 @@ export function statusBadge(status: string): { label: string; kind: StatusKind; 
       kind: "warn",
       zh: "需要 CC Switch 本地路由转换",
     },
+    CCS_ROUTE_OK: { label: status, kind: "ok", zh: "当前 CCS 路由链可用" },
+    CCS_ROUTE_OK_DIRECT_NATIVE_OK: {
+      label: status,
+      kind: "ok",
+      zh: "CCS 路由链与上游直连均可用",
+    },
+    CCS_ROUTE_OK_DIRECT_VARIANT: {
+      label: status,
+      kind: "ok",
+      zh: "当前 CCS 路由链可用（上游为跨协议变体）",
+    },
+    CCS_ROUTE_OK_DIRECT_PARSE_FAILED: {
+      label: status,
+      kind: "ok",
+      zh: "当前 CCS 路由链可用（上游直连解析失败）",
+    },
+    CCS_ROUTE_NOT_RUNNING: {
+      label: status,
+      kind: "warn",
+      zh: "CCS 路由已配置但未运行",
+    },
+    CCS_ROUTE_NOT_APPLICABLE: {
+      label: status,
+      kind: "skip",
+      zh: "CCS 路由不适用",
+    },
+    CCS_ROUTE_TARGET_MISMATCH: {
+      label: status,
+      kind: "warn",
+      zh: "路由实际目标与所选 Provider 不一致",
+    },
+    CCS_ROUTE_FAILED_DIRECT_OK: {
+      label: status,
+      kind: "warn",
+      zh: "路由失败，但上游直连可用",
+    },
+    CCS_ROUTE_AND_DIRECT_FAILED: {
+      label: status,
+      kind: "danger",
+      zh: "路由与上游直连均失败",
+    },
+    RESPONSE_BODY_TOO_LARGE: {
+      label: status,
+      kind: "warn",
+      zh: "响应体超过 2MB 限制",
+    },
     RESPONSE_PROTOCOL_VARIANT_OK: {
       label: status,
       kind: "info",
       zh: "目标协议与实际返回结构不同，但解析成功",
     },
+    DIRECT_PROTOCOL_VARIANT_OK: {
+      label: status,
+      kind: "info",
+      zh: "上游直连跨协议解析成功，不能证明当前协议配置完整可用",
+    },
+    DIRECT_NATIVE_OK: { label: status, kind: "ok", zh: "上游直连原生协议成功" },
+    DIRECT_LOOSE_TEXT_OK: {
+      label: status,
+      kind: "info",
+      zh: "宽松字段解析到文本，不能证明协议兼容",
+    },
+    LOOSE_RESPONSE_TEXT_OK: {
+      label: status,
+      kind: "info",
+      zh: "宽松字段解析到文本，不能证明协议兼容",
+    },
     GENERATE_OK: { label: status, kind: "ok", zh: "生成请求成功" },
     STREAM_OK: { label: status, kind: "ok", zh: "流式请求成功" },
+    STREAM_PROTOCOL_VARIANT_OK: {
+      label: status,
+      kind: "info",
+      zh: "流式跨协议解析成功",
+    },
     PARTIAL_TEXT: { label: status, kind: "info", zh: "返回了文本但缺少成功标记" },
     PROVIDER_BUDGET_EXHAUSTED: {
       label: status,

@@ -1,5 +1,6 @@
 use crate::ccs_adapter::{DiscoveryInfo, ProviderScanView};
 use crate::diagnostics::engine::{run_diagnosis, DiagnosisEvent};
+use crate::diagnostics::route_planner::VerifyMode;
 use crate::diagnostics::{estimate_attempts, DiagnosisMode, StartDiagnosisRequest};
 use crate::error::{PublicError, PublicResult};
 use crate::state::AppState;
@@ -116,14 +117,25 @@ pub async fn start_diagnosis(
     let cancel = state.begin_run(run_id.clone())?;
     let mode = request.mode;
     let concurrency = request.concurrency;
+    let verify_mode = VerifyMode::parse(request.verify_mode.as_deref().unwrap_or("auto"));
+    let routing = scan.routing.clone();
     let app2 = app.clone();
     let app_for_complete = app.clone();
     let rid = run_id.clone();
     let rid_complete = run_id.clone();
     tauri::async_runtime::spawn(async move {
-        run_diagnosis(rid, providers, mode, concurrency, cancel, move |event| {
-            let _ = app2.emit("diagnosis_event", event);
-        })
+        run_diagnosis(
+            rid,
+            providers,
+            mode,
+            concurrency,
+            cancel,
+            move |event| {
+                let _ = app2.emit("diagnosis_event", event);
+            },
+            routing,
+            verify_mode,
+        )
         .await;
         // best-effort clear active run; ignore if app shutting down
         use tauri::Manager;

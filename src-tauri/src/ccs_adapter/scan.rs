@@ -43,6 +43,7 @@ pub fn scan_database(
                 can_test: false,
                 scanned_at: Utc::now().to_rfc3339(),
                 cc_switch_version_hint: None,
+                routing: None,
             },
             vec![],
         ));
@@ -73,10 +74,14 @@ pub fn scan_database(
                 can_test: false,
                 scanned_at: Utc::now().to_rfc3339(),
                 cc_switch_version_hint: read_version_hint(&conn),
+                routing: None,
             },
             vec![],
         ));
     }
+
+    // Read-only routing discovery (never fails the provider scan)
+    let routing = Some(super::routing::discover_routing_status_sync(&conn));
 
     let raws = load_raw_providers(
         &conn,
@@ -107,6 +112,7 @@ pub fn scan_database(
             can_test: fp.status.can_test(),
             scanned_at: Utc::now().to_rfc3339(),
             cc_switch_version_hint: read_version_hint(&conn),
+            routing,
         },
         normalized,
     ))

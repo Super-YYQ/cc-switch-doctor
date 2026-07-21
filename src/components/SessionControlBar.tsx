@@ -1,5 +1,5 @@
 import { Activity, Loader2, Square, RotateCcw } from "lucide-react";
-import type { DiagnosisMode } from "@/types";
+import type { DiagnosisMode, RoutingStatusView, VerifyMode } from "@/types";
 import { modeDescription, modeTooltip } from "@/lib/utils";
 
 interface Props {
@@ -14,10 +14,26 @@ interface Props {
   currentName?: string | null;
   disabledStart: boolean;
   stopping?: boolean;
+  verifyMode: VerifyMode;
+  routing?: RoutingStatusView | null;
   onMode: (m: DiagnosisMode) => void;
   onConcurrency: (n: number) => void;
+  onVerifyMode: (m: VerifyMode) => void;
   onStart: () => void;
   onCancel: () => void;
+}
+
+function routingChip(routing?: RoutingStatusView | null): { text: string; kind: string } {
+  if (!routing || !routing.configDetected) {
+    return { text: "CCS 路由：不可用", kind: "skip" };
+  }
+  if (routing.serverRunning || routing.healthReachable) {
+    return { text: "CCS 路由：运行中", kind: "ok" };
+  }
+  if (routing.globalEnabled) {
+    return { text: "CCS 路由：已配置但未运行", kind: "warn" };
+  }
+  return { text: "CCS 路由：未开启", kind: "skip" };
 }
 
 export function SessionControlBar({
@@ -32,16 +48,43 @@ export function SessionControlBar({
   currentName,
   disabledStart,
   stopping,
+  verifyMode,
+  routing,
   onMode,
   onConcurrency,
+  onVerifyMode,
   onStart,
   onCancel,
 }: Props) {
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
   const finished = !running && completed > 0;
+  const rchip = routingChip(routing);
+  const claudeApp = routing?.apps?.find((a) => a.appType === "claude");
 
   return (
     <section className="panel session-bar" style={{ marginTop: 8, padding: "8px 12px" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          flexWrap: "wrap",
+          marginBottom: 6,
+        }}
+      >
+        <span className={`badge ${rchip.kind}`}>{rchip.text}</span>
+        {claudeApp && (
+          <span className={`badge ${claudeApp.enabled ? "ok" : "skip"}`}>
+            Claude：{claudeApp.enabled ? "已接管" : "未接管"}
+          </span>
+        )}
+        {claudeApp?.autoFailoverEnabled && <span className="badge warn">自动故障转移：开启</span>}
+        {routing?.warning && (
+          <span className="badge warn" title={routing.warning}>
+            路由提示
+          </span>
+        )}
+      </div>
       <div
         style={{
           display: "flex",
@@ -89,6 +132,31 @@ export function SessionControlBar({
                 aria-label={`并发 ${n}`}
               >
                 {n}
+              </button>
+            ))}
+          </div>
+
+          <div
+            className="segmented"
+            role="radiogroup"
+            aria-label="验证方式"
+            title="自动：App 路由关闭仅直连，开启且可达时直连+路由。仅直连不探测路由。直连+CCS 路由强制双通道。"
+          >
+            {(
+              [
+                ["auto", "自动"],
+                ["direct_only", "仅直连"],
+                ["direct_and_route", "直连+路由"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={verifyMode === id ? "active" : ""}
+                disabled={running}
+                onClick={() => onVerifyMode(id)}
+              >
+                {label}
               </button>
             ))}
           </div>

@@ -269,4 +269,7 @@ pub struct ProviderScanView {
     pub can_test: bool,
     pub scanned_at: String,
     pub cc_switch_version_hint: Option<String>,
+    /// Read-only CCS local route status (may be unavailable).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<crate::ccs_adapter::routing::RoutingStatusView>,
 }
