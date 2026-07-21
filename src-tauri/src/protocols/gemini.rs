@@ -175,7 +175,7 @@ mod tests {
                 || u.contains("/v1beta/models/m:generateContent"),
             "{u}"
         );
-        assert!(!u.contains("/v1/v1beta") || true);
+        assert!(!u.contains("/v1/v1beta"), "{u}");
     }
 
     use super::*;

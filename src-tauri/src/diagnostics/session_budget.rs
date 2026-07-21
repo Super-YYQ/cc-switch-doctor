@@ -13,7 +13,7 @@ use crate::protocols::types::{
 use crate::security::origin::SameOriginPolicy;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Mutex;
 
 pub const MAX_HOST_REQUESTS: usize = 30;
 
@@ -198,13 +198,8 @@ fn canonicalize_url_for_cache(raw: &str) -> String {
 /// Shared across all providers in one diagnosis run.
 pub struct SessionBudget {
     inner: Mutex<SessionBudgetInner>,
-    /// Single-flight waiters for in-flight identical keys.
-    flight: Mutex<HashMap<RequestCacheKey, Arc<FlightSlot>>>,
-}
-
-struct FlightSlot {
-    done: Mutex<Option<AttemptResult>>,
-    cv: Condvar,
+    /// Waiters for in-flight identical keys (async oneshot senders).
+    flight: Mutex<HashMap<RequestCacheKey, Vec<tokio::sync::oneshot::Sender<AttemptResult>>>>,
 }
 
 #[derive(Default)]
@@ -233,53 +228,41 @@ impl SessionBudget {
         })
     }
 
-    /// Single-flight: if another task is already sending this key, wait and reuse.
-    /// Returns Ok(None) when caller should send; Ok(Some) when reused from peer.
-    pub fn begin_or_wait_flight(&self, key: &RequestCacheKey) -> Option<AttemptResult> {
-        // Fast path: already cached
+    /// Async single-flight registration.
+    /// Returns `None` if this caller should send (leader).
+    /// Returns `Ok(Some(rx))` if another send is in flight — await the oneshot.
+    pub fn begin_flight(
+        &self,
+        key: &RequestCacheKey,
+    ) -> Option<tokio::sync::oneshot::Receiver<AttemptResult>> {
         if let Some(c) = self.get_cached(key) {
-            return Some(c);
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let _ = tx.send(c);
+            return Some(rx);
         }
-
-        let slot = {
-            let mut flights = self.flight.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(existing) = flights.get(key) {
-                Arc::clone(existing)
-            } else {
-                let s = Arc::new(FlightSlot {
-                    done: Mutex::new(None),
-                    cv: Condvar::new(),
-                });
-                flights.insert(key.clone(), Arc::clone(&s));
-                return None; // we are the leader
-            }
-        };
-
-        // Waiter path
-        let mut done = slot.done.lock().unwrap_or_else(|e| e.into_inner());
-        while done.is_none() {
-            done = slot.cv.wait(done).unwrap_or_else(|e| e.into_inner());
+        let mut flights = self.flight.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(waiters) = flights.get_mut(key) {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            waiters.push(tx);
+            return Some(rx);
         }
-        done.clone().map(|mut r| {
-            r.reused_from_cache = true;
-            r.http_sent = false;
-            r.suggestion_note = Some(
-                "本次结果复用了同一会话内相同配置组合的已完成请求，未重复发送 HTTP 请求。".into(),
-            );
-            r
-        })
+        flights.insert(key.clone(), Vec::new());
+        None
     }
 
     pub fn finish_flight(&self, key: &RequestCacheKey, result: AttemptResult) {
         self.store_cache(key.clone(), result.clone());
         let mut flights = self.flight.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(slot) = flights.remove(key) {
-            {
-                let mut done = slot.done.lock().unwrap_or_else(|e| e.into_inner());
-                *done = Some(result);
+        if let Some(waiters) = flights.remove(key) {
+            for tx in waiters {
+                let _ = tx.send(result.clone());
             }
-            slot.cv.notify_all();
         }
+    }
+
+    pub fn abort_flight(&self, key: &RequestCacheKey) {
+        let mut flights = self.flight.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = flights.remove(key);
     }
 
     pub fn try_reserve_send(&self, origin: &OriginKey) -> Result<(), BudgetStopReason> {
@@ -355,7 +338,6 @@ mod tests {
     use crate::ccs_adapter::ProtocolKind;
     use serde_json::json;
     use std::collections::HashMap as StdMap;
-    use std::thread;
 
     fn origin(host: &str) -> OriginKey {
         OriginKey {
@@ -516,20 +498,12 @@ mod tests {
 
     #[test]
     fn concurrent_identical_requests_single_flight() {
-        let budget = Arc::new(SessionBudget::new());
+        let budget = SessionBudget::new();
         let o = origin("api.example.com");
         let b = built("https://api.example.com/v1/x", "POST", AuthScheme::Bearer);
         let key = cache_key_from_built(&o, &b, "fp", None, AuthScheme::Bearer);
-
-        let leader = budget.begin_or_wait_flight(&key);
-        assert!(leader.is_none());
-
-        let budget2 = Arc::clone(&budget);
-        let key2 = key.clone();
-        let waiter = thread::spawn(move || budget2.begin_or_wait_flight(&key2));
-
-        // Give waiter time to park
-        thread::sleep(std::time::Duration::from_millis(30));
+        assert!(budget.begin_flight(&key).is_none());
+        let rx = budget.begin_flight(&key).expect("waiter");
         let mut r = AttemptResult::network_error(
             ProtocolKind::OpenAiChat,
             "m",
@@ -540,9 +514,7 @@ mod tests {
         r.ok = true;
         r.classification = "GENERATE_OK".into();
         budget.finish_flight(&key, r);
-
-        let got = waiter.join().unwrap().expect("waiter should reuse");
-        assert!(got.reused_from_cache);
+        let got = rx.blocking_recv().unwrap();
         assert!(got.ok);
     }
 

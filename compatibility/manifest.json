@@ -1,6 +1,6 @@
 {
   "manifestVersion": 1,
-  "doctorVersion": "0.1.3",
+  "doctorVersion": "0.1.4",
   "verifiedAt": "2026-07-20T14:30:00Z",
   "checkedAt": "2026-07-21",
   "ccSwitch": {
@@ -23,6 +23,29 @@
         "status": "verified",
         "userVersion": 15,
         "requiredTables": ["providers", "provider_endpoints", "settings"],
+        "providersColumns": [
+          "id",
+          "app_type",
+          "name",
+          "settings_config",
+          "website_url",
+          "category",
+          "created_at",
+          "sort_index",
+          "notes",
+          "icon",
+          "icon_color",
+          "meta",
+          "is_current",
+          "in_failover_queue"
+        ],
+        "providerEndpointsColumns": ["id", "provider_id", "app_type", "url", "added_at"]
+      },
+      {
+        "id": "ccs-schema-v13-providers-core",
+        "status": "compatible",
+        "userVersion": 13,
+        "requiredTables": ["providers", "provider_endpoints"],
         "providersColumns": [
           "id",
           "app_type",

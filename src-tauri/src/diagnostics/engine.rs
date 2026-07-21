@@ -354,7 +354,11 @@ async fn diagnose_one(
         if result.classification == "QUOTA_EXHAUSTED" && plan.is_current_config {
             stop_all = true;
         }
-        if result.classification == "KEY_INVALID" && plan.is_current_config {
+        if matches!(
+            result.classification.as_str(),
+            "KEY_INVALID" | "AUTH_INVALID" | "AUTH_PERMISSION_DENIED" | "QUOTA_EXHAUSTED"
+        ) && plan.is_current_config
+        {
             stop_all = true;
         }
 
@@ -570,6 +574,7 @@ async fn execute_plan(
             reused_from_cache: false,
             suggestion_note: None,
             token_limit_field: Some(token_field),
+            error_evidence: vec![],
         };
     }
 
@@ -645,6 +650,7 @@ async fn execute_plan(
                 reused_from_cache: false,
                 suggestion_note: None,
                 token_limit_field: None,
+                error_evidence: vec![],
             };
         }
     };
@@ -659,8 +665,37 @@ async fn execute_plan(
     if let Some(cached) = session_budget.get_cached(&cache_key) {
         return cached;
     }
-    if let Some(peer) = session_budget.begin_or_wait_flight(&cache_key) {
-        return peer;
+    if let Some(rx) = session_budget.begin_flight(&cache_key) {
+        return match rx.await {
+            Ok(mut r) => {
+                r.reused_from_cache = true;
+                r.http_sent = false;
+                r
+            }
+            Err(_) => AttemptResult {
+                ok: false,
+                partial: false,
+                status_code: None,
+                latency_ms: 0,
+                ttft_ms: None,
+                protocol: plan.protocol,
+                model: plan.model.clone(),
+                url: safe_url.clone(),
+                stream: plan.stream,
+                purpose: built.purpose,
+                extracted_text: None,
+                tool_call_ok: None,
+                error_kind: Some("cancelled".into()),
+                error_message: Some("等待相同请求时被取消".into()),
+                response_excerpt: None,
+                classification: "CANCELLED".into(),
+                http_sent: false,
+                reused_from_cache: false,
+                suggestion_note: None,
+                token_limit_field: token_for_key,
+                error_evidence: vec![],
+            },
+        };
     }
 
     if let Err(reason) = session_budget.try_reserve_send(origin_key) {
@@ -698,6 +733,7 @@ async fn execute_plan(
             reused_from_cache: false,
             suggestion_note: None,
             token_limit_field: token_for_key,
+            error_evidence: vec![],
         };
         session_budget.finish_flight(&cache_key, r.clone());
         return r;

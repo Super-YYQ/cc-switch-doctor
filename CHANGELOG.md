@@ -1,3 +1,20 @@
+## [0.1.4] — 2026-07-21
+
+### Fixed
+
+- Schema v13 exact compatible fingerprint so real CC Switch DBs load Providers again
+- Core app filter chips always visible; default filter is Claude (not All)
+- Provider rows no longer auto-selected after scan; start requires explicit check
+- Provider overflow menu closes on outside click / Esc / item action
+- Async single-flight (no Condvar blocking Tokio workers)
+- Classify HTTP 200 business errors (quota/auth/WAF) before protocol mismatch
+- Cancel waits for run_finished before allowing a new run (no late event races)
+- AUTH_INVALID / QUOTA stop strategy; Gemini assert without `|| true`
+
+### Changed
+
+- Clearer empty states for schema block / filter / search
+
 ## [0.1.3] — 2026-07-21
 
 ### Fixed
