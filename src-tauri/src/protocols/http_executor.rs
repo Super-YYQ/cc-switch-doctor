@@ -318,6 +318,10 @@ impl HttpExecutor {
                 error_message: Some(excerpt.clone()),
                 response_excerpt: Some(excerpt),
                 classification,
+                http_sent: true,
+                reused_from_cache: false,
+                suggestion_note: None,
+                token_limit_field: None,
             };
         }
 
@@ -343,6 +347,10 @@ impl HttpExecutor {
                 error_message: Some(excerpt.clone()),
                 response_excerpt: Some(excerpt),
                 classification,
+                http_sent: true,
+                reused_from_cache: false,
+                suggestion_note: None,
+                token_limit_field: None,
             };
         }
 
