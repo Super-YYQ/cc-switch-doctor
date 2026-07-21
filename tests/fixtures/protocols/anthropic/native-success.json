@@ -2,7 +2,7 @@
   "id": "msg_fixture_1",
   "type": "message",
   "role": "assistant",
-  "content": [{"type": "text", "text": "fixture anthropic ok"}],
+  "content": [{ "type": "text", "text": "fixture anthropic ok" }],
   "stop_reason": "end_turn",
-  "usage": {"input_tokens": 3, "output_tokens": 4}
+  "usage": { "input_tokens": 3, "output_tokens": 4 }
 }

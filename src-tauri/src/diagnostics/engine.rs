@@ -44,6 +44,7 @@ pub struct StartDiagnosisRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum DiagnosisEvent {
     RunStarted {
         run_id: String,

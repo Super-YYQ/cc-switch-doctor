@@ -6,7 +6,7 @@
     {
       "type": "message",
       "role": "assistant",
-      "content": [{"type": "output_text", "text": "fixture responses ok"}]
+      "content": [{ "type": "output_text", "text": "fixture responses ok" }]
     }
   ]
 }

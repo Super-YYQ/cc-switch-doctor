@@ -265,8 +265,7 @@ export function ResultCard({ summary: s, onCopy }: Props) {
             <li key={g.key} className="mono muted">
               {g.label}
               <br />
-              真实发送 {g.realSends} 次
-              {g.cacheHits > 0 ? ` · 缓存复用 ${g.cacheHits} 次` : ""}
+              真实发送 {g.realSends} 次{g.cacheHits > 0 ? ` · 缓存复用 ${g.cacheHits} 次` : ""}
               <br />
               最终状态：{g.finalStatus}
               {statusBadge(g.finalStatus).zh ? `（${statusBadge(g.finalStatus).zh}）` : ""}

@@ -2,7 +2,7 @@
   "id": "msg_fixture_2",
   "type": "message",
   "role": "assistant",
-  "content": [{"type": "text", "text": "usage null still ok"}],
+  "content": [{ "type": "text", "text": "usage null still ok" }],
   "stop_reason": "end_turn",
   "usage": null
 }

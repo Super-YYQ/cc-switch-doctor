@@ -334,15 +334,17 @@ export function routeDispositionLabel(
 }
 
 /** Group attempt evidence lines by URL/protocol for default (non-debug) display. */
-export function groupAttemptsByCanonical(attempts: {
-  url: string;
-  protocol: string;
-  stream?: boolean;
-  classification: string;
-  httpSent?: boolean;
-  reusedFromCache?: boolean;
-  ok?: boolean;
-}[]): { key: string; label: string; realSends: number; cacheHits: number; finalStatus: string }[] {
+export function groupAttemptsByCanonical(
+  attempts: {
+    url: string;
+    protocol: string;
+    stream?: boolean;
+    classification: string;
+    httpSent?: boolean;
+    reusedFromCache?: boolean;
+    ok?: boolean;
+  }[],
+): { key: string; label: string; realSends: number; cacheHits: number; finalStatus: string }[] {
   const map = new Map<
     string,
     { label: string; realSends: number; cacheHits: number; finalStatus: string }

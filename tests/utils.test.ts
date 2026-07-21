@@ -97,7 +97,10 @@ describe("statusBadge", () => {
 describe("primaryStatusCode and routeDispositionLabel", () => {
   it("prefers primaryOutcome over legacy status", () => {
     expect(
-      primaryStatusCode({ status: "CCS_ROUTE_NOT_APPLICABLE", primaryOutcome: "NETWORK_UNREACHABLE" }),
+      primaryStatusCode({
+        status: "CCS_ROUTE_NOT_APPLICABLE",
+        primaryOutcome: "NETWORK_UNREACHABLE",
+      }),
     ).toBe("NETWORK_UNREACHABLE");
     expect(primaryStatusCode({ status: "AUTH_INVALID" })).toBe("AUTH_INVALID");
   });

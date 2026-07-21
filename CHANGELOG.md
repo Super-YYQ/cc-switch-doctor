@@ -1,3 +1,25 @@
+## [0.1.7] — 2026-07-21
+
+### Fixed
+
+- **P0:** `CCS_ROUTE_NOT_APPLICABLE` / `CCS_ROUTE_NOT_RUNNING` / DirectOnly Skip no longer override real direct outcomes (`NETWORK_UNREACHABLE`, `AUTH_INVALID`, etc.)
+- Provider primary status equals `direct_status` when no real CCS route business request was sent (`CcsLocalRoute && http_sent`)
+- Route target and failover counts refreshed via `GET /status` before and after route probes
+- Per-app route probe single-flight (async Leader/Waiter) so concurrency 2/3 cannot double-send
+- Claude route model aliases sourced from compatibility `routingProfiles` (`claude-sonnet-5` etc.); removed hard-coded `claude-sonnet-4-20250514`
+- UI primary badge uses `primaryOutcome` only; neutral “路由未验证” chip for disposition-only cases
+- Attempt chain groups cache reuse vs real sends; top real-request count uses `http_sent` only
+
+### Added
+
+- Layered outcome model: `primary_outcome` + `DirectChannelSummary` + `RouteChannelSummary` / `RouteDisposition`
+- Source review gate: `docs/research/v0.1.7-source-review.md` (CC Switch / Codex / Anthropic SDK / Gemini CLI / OpenCode)
+- Protocol adapter registry + sanitized fixture corpus under `tests/fixtures/protocols/`
+
+### Security
+
+- Route probes still use `PROXY_MANAGED` only; non-loopback blocked; no CLI spawn; proxy_config SELECT-only
+
 ## [0.1.6] — 2026-07-21
 
 ### Added

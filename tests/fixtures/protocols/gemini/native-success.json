@@ -3,7 +3,7 @@
     {
       "content": {
         "role": "model",
-        "parts": [{"text": "fixture gemini ok"}]
+        "parts": [{ "text": "fixture gemini ok" }]
       },
       "finishReason": "STOP"
     }
