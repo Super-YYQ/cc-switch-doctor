@@ -1,6 +1,9 @@
 use super::managed_auth::detect_managed_auth;
+use super::model_semantics::{ModelCandidate, ModelCandidateSource};
 use super::models::{AppType, AuthKind, NormalizedProvider, ProtocolKind, ProviderKind};
-use crate::security::redact::{mask_api_key, sanitize_url_for_display};
+use crate::security::redact::{
+    mask_api_key, sanitize_url_for_display, sanitize_url_with_redactor, SecretRedactor,
+};
 use secrecy::SecretString;
 use serde_json::Value;
 use uuid::Uuid;
@@ -59,25 +62,65 @@ pub fn normalize_provider(raw: RawProviderRow) -> NormalizedProvider {
         &settings,
     );
 
-    let mut model_candidates = Vec::new();
-    if let Some(m) = model.clone() {
-        model_candidates.push(m);
-    }
-    // Additional model fields
-    for p in [
-        "/env/ANTHROPIC_MODEL",
-        "/env/ANTHROPIC_DEFAULT_SONNET_MODEL",
-        "/env/ANTHROPIC_DEFAULT_OPUS_MODEL",
-        "/env/ANTHROPIC_DEFAULT_HAIKU_MODEL",
-        "/env/GEMINI_MODEL",
-        "/model",
-        "/options/model",
-    ] {
-        if let Some(s) = settings.pointer(p).and_then(|v| v.as_str()) {
-            if !s.is_empty() && !model_candidates.iter().any(|x| x == s) {
-                model_candidates.push(s.to_string());
-            }
+    let mut model_candidates: Vec<ModelCandidate> = Vec::new();
+    let claude_family = matches!(app_type, AppType::Claude | AppType::ClaudeDesktop);
+
+    if let Some(ref m) = model {
+        if claude_family {
+            model_candidates.push(ModelCandidate::from_configured_claude(m));
+        } else {
+            model_candidates.push(ModelCandidate::from_configured_plain(m));
         }
+    }
+
+    // Role / additional model fields — keep source so success is not "model variant".
+    let role_fields: &[(&str, &str)] = if claude_family {
+        &[
+            ("/env/ANTHROPIC_MODEL", "primary"),
+            ("/env/ANTHROPIC_DEFAULT_SONNET_MODEL", "sonnet"),
+            ("/env/ANTHROPIC_DEFAULT_OPUS_MODEL", "opus"),
+            ("/env/ANTHROPIC_DEFAULT_HAIKU_MODEL", "haiku"),
+            ("/env/ANTHROPIC_DEFAULT_FABLE_MODEL", "fable"),
+            ("/env/CLAUDE_CODE_SUBAGENT_MODEL", "subagent"),
+        ]
+    } else {
+        &[
+            ("/env/GEMINI_MODEL", "primary"),
+            ("/model", "primary"),
+            ("/options/model", "primary"),
+        ]
+    };
+
+    for (path, role) in role_fields {
+        let Some(s) = settings.pointer(path).and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if s.is_empty() {
+            continue;
+        }
+        // Skip if already present as same wire model.
+        let already = model_candidates.iter().any(|c| {
+            c.display_model == s
+                || c.wire_model == s
+                || (claude_family
+                    && c.wire_model == crate::ccs_adapter::strip_claude_one_m_marker(s).as_ref())
+        });
+        if already {
+            continue;
+        }
+        // Primary field already covered by configured model.
+        if *role == "primary" {
+            continue;
+        }
+        let cand = if claude_family {
+            let wire = crate::ccs_adapter::strip_claude_one_m_marker(s).into_owned();
+            ModelCandidate::role_mapping(s, &wire)
+        } else {
+            ModelCandidate::role_mapping(s, s)
+        };
+        let _ = role; // role label reserved for future UI; source is ConfiguredRoleMapping
+        let _ = ModelCandidateSource::ConfiguredRoleMapping;
+        model_candidates.push(cand);
     }
 
     let mut endpoint_candidates = raw.endpoint_urls;
@@ -112,7 +155,15 @@ pub fn normalize_provider(raw: RawProviderRow) -> NormalizedProvider {
     };
 
     let masked_key = mask_api_key(&api_key);
-    let safe_base_url = sanitize_url_for_display(&base_url);
+    // Register the real key so path/query/URL-encoded secrets are redacted, not
+    // only generic sk- heuristics (v0.1.9 Provider card URL fix).
+    let mut redactor = SecretRedactor::new();
+    redactor.register_key(&api_key);
+    let safe_base_url = if api_key.trim().is_empty() {
+        sanitize_url_for_display(&base_url)
+    } else {
+        sanitize_url_with_redactor(&base_url, &redactor)
+    };
     let (preferred_auth, credential_source) =
         resolve_preferred_auth(app_type, &settings, auth_kind);
 
@@ -556,5 +607,59 @@ wire_api = "chat"
         let n = normalize_provider(raw);
         assert!(!n.is_selectable());
         assert!(n.skip_reason.unwrap().contains("OAuth"));
+    }
+
+    #[test]
+    fn claude_one_m_becomes_local_marker_candidate() {
+        let raw = RawProviderRow {
+            id: "1".into(),
+            app_type: "claude".into(),
+            name: "GLM".into(),
+            settings_config: r#"{"env":{"ANTHROPIC_BASE_URL":"https://api.example.com/v1","ANTHROPIC_AUTH_TOKEN":"sk-abcdefghabcdefgh","ANTHROPIC_MODEL":"GLM-5.2[1M]","ANTHROPIC_DEFAULT_SONNET_MODEL":"sonnet-mapped"}}"#.into(),
+            website_url: None,
+            category: Some("custom".into()),
+            meta: r#"{"apiFormat":"anthropic"}"#.into(),
+            is_current: true,
+            endpoint_urls: vec![],
+        };
+        let n = normalize_provider(raw);
+        assert_eq!(n.configured_model.as_deref(), Some("GLM-5.2[1M]"));
+        let current = n
+            .model_candidates
+            .iter()
+            .find(|c| c.equivalent_to_current)
+            .expect("current candidate");
+        assert_eq!(current.wire_model, "GLM-5.2");
+        assert_eq!(
+            current.source,
+            super::ModelCandidateSource::LocalMarkerNormalized
+        );
+        assert!(n.model_candidates.iter().any(|c| c.source
+            == super::ModelCandidateSource::ConfiguredRoleMapping
+            && c.wire_model == "sonnet-mapped"));
+    }
+
+    #[test]
+    fn safe_base_url_redacts_key_in_path() {
+        let key = "sk-secret-path-ABCDEFGH";
+        let raw = RawProviderRow {
+            id: "1".into(),
+            app_type: "claude".into(),
+            name: "Relay".into(),
+            settings_config: format!(
+                r#"{{"env":{{"ANTHROPIC_BASE_URL":"https://example.com/{key}/v1","ANTHROPIC_AUTH_TOKEN":"{key}","ANTHROPIC_MODEL":"m"}}}}"#
+            ),
+            website_url: None,
+            category: Some("custom".into()),
+            meta: r#"{"apiFormat":"anthropic"}"#.into(),
+            is_current: true,
+            endpoint_urls: vec![],
+        };
+        let n = normalize_provider(raw);
+        assert!(
+            !n.safe_base_url.contains(key),
+            "full key leaked in safe_base_url: {}",
+            n.safe_base_url
+        );
     }
 }

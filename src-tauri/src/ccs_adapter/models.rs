@@ -142,7 +142,8 @@ pub struct NormalizedProvider {
     pub api_key: secrecy::SecretString,
     pub configured_protocol: Option<ProtocolKind>,
     pub configured_model: Option<String>,
-    pub model_candidates: Vec<String>,
+    /// Structured model candidates with source + wire/display semantics.
+    pub model_candidates: Vec<crate::ccs_adapter::ModelCandidate>,
     pub endpoint_candidates: Vec<String>,
     pub custom_user_agent: Option<String>,
     pub needs_local_routing: Option<bool>,

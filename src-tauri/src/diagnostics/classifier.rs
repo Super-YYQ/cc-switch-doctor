@@ -237,13 +237,27 @@ pub fn classify_with_evidence(
         "请求过于频繁",
     ];
     let model_kw = [
+        "model_not_found",
         "model not found",
+        "model_not_available",
+        "model_unavailable",
+        "model unavailable",
+        "model is unavailable",
+        "no_available_channel",
+        "no_available_provider",
+        "no available channel for model",
+        "no available provider for model",
+        "unsupported model",
         "unknown model",
         "invalid model",
         "model does not exist",
         "no access to model",
         "模型不存在",
         "无权访问模型",
+        "模型不可用",
+        "没有可用渠道",
+        "无可用渠道",
+        "当前分组无可用渠道",
     ];
 
     let hit = |words: &[&str]| -> Option<String> {
@@ -253,9 +267,34 @@ pub fn classify_with_evidence(
             .map(|s| (*s).to_string())
     };
 
+    // Strong structured error.code / type mapping (before HTTP status fallback).
+    if let Some(code) = extract_structured_error_code(body) {
+        let code_l = code.to_ascii_lowercase();
+        if matches!(
+            code_l.as_str(),
+            "model_not_found"
+                | "model_not_available"
+                | "model_unavailable"
+                | "no_available_channel"
+                | "no_available_provider"
+        ) || code_l.contains("model_not_found")
+            || code_l.contains("no_available_channel")
+            || code_l.contains("no_available_provider")
+        {
+            evidence.push(ErrorEvidence {
+                source: "error_envelope".into(),
+                code: Some(code),
+                message: None,
+                matched_keyword: Some("model_not_found".into()),
+            });
+            return ("MODEL_NOT_FOUND".into(), evidence);
+        }
+    }
+
     // Non-2xx: HTTP status is authoritative first for 401/402/403/404/429.
     // For 2xx keyword scans, still run (caller should only invoke after success
     // parse failed, except for structured envelopes).
+    // For 5xx: structured body / model keywords MUST run before generic fallback.
     match status {
         401 => {
             evidence.push(ErrorEvidence {
@@ -332,6 +371,34 @@ pub fn classify_with_evidence(
         }
         408 | 504 => return ("TIMEOUT".into(), evidence),
         500..=599 => {
+            // Structured / keyword model errors take priority over bare 5xx.
+            if let Some(k) = hit(&model_kw) {
+                evidence.push(ErrorEvidence {
+                    source: "text_keyword".into(),
+                    code: Some(status.to_string()),
+                    message: None,
+                    matched_keyword: Some(k),
+                });
+                return ("MODEL_NOT_FOUND".into(), evidence);
+            }
+            if let Some(k) = hit(&quota_kw) {
+                evidence.push(ErrorEvidence {
+                    source: "text_keyword".into(),
+                    code: Some(status.to_string()),
+                    message: None,
+                    matched_keyword: Some(k),
+                });
+                return ("QUOTA_EXHAUSTED".into(), evidence);
+            }
+            if let Some(k) = hit(&auth_kw) {
+                evidence.push(ErrorEvidence {
+                    source: "text_keyword".into(),
+                    code: Some(status.to_string()),
+                    message: None,
+                    matched_keyword: Some(k),
+                });
+                return ("AUTH_INVALID".into(), evidence);
+            }
             if lower.contains("nginx") || lower.contains("bad gateway") {
                 return ("GATEWAY_OR_WAF".into(), evidence);
             }
@@ -397,13 +464,27 @@ pub fn classify_with_evidence(
     ("UNKNOWN_ERROR".into(), evidence)
 }
 
+/// How the winning success model relates to the current configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ModelSuccessKind {
+    /// ConfiguredModel or LocalMarkerNormalized.
+    #[default]
+    CurrentConfig,
+    /// Explicit Provider role mapping (Sonnet/Opus/Haiku/…).
+    ConfiguredRoleMapping,
+    /// True discovered / other model change.
+    TrueVariant,
+    /// DoctorGuess.
+    DoctorGuess,
+}
+
 pub fn final_status_from_attempts(
     current_ok: bool,
     any_ok: bool,
     best_classification: &str,
     protocol_changed: bool,
     url_changed: bool,
-    model_changed: bool,
+    model_success: ModelSuccessKind,
     needs_local_routing: bool,
 ) -> String {
     if current_ok {
@@ -425,8 +506,16 @@ pub fn final_status_from_attempts(
         if protocol_changed {
             return "PROTOCOL_FALLBACK_OK".into();
         }
-        if model_changed {
-            return "MODEL_VARIANT_OK".into();
+        // Role mapping / true variant / guess take priority over bare URL fix.
+        match model_success {
+            ModelSuccessKind::ConfiguredRoleMapping => {
+                return "CONFIGURED_MODEL_MAPPING_OK".into();
+            }
+            ModelSuccessKind::TrueVariant => return "MODEL_VARIANT_OK".into(),
+            ModelSuccessKind::DoctorGuess => return "MODEL_GUESS_OK".into(),
+            ModelSuccessKind::CurrentConfig => {
+                // Same model (incl. local-marker normalize). Fall through to URL/auth.
+            }
         }
         if url_changed {
             return "CORRECTED_BASE_PATH_OK".into();
@@ -440,6 +529,26 @@ pub fn final_status_from_attempts(
         return "AUTH_PERMISSION_DENIED".into();
     }
     best_classification.to_string()
+}
+
+/// Pull error.code / error.type from a JSON body when present.
+fn extract_structured_error_code(body: &str) -> Option<String> {
+    let parsed: serde_json::Value = serde_json::from_str(body).ok()?;
+    let err = parsed.get("error")?;
+    if !is_meaningful_error_value(err) {
+        return None;
+    }
+    err.get("code")
+        .and_then(|v| {
+            v.as_str()
+                .map(|s| s.to_string())
+                .or_else(|| v.as_i64().map(|n| n.to_string()))
+        })
+        .or_else(|| {
+            err.get("type")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
 }
 
 #[cfg(test)]
@@ -588,13 +697,21 @@ mod tests {
                 "RESPONSE_PROTOCOL_VARIANT_OK",
                 false,
                 false,
-                false,
+                ModelSuccessKind::CurrentConfig,
                 false
             ),
             "DIRECT_PROTOCOL_VARIANT_OK"
         );
         assert_eq!(
-            final_status_from_attempts(true, true, "GENERATE_OK", false, false, false, false),
+            final_status_from_attempts(
+                true,
+                true,
+                "GENERATE_OK",
+                false,
+                false,
+                ModelSuccessKind::CurrentConfig,
+                false
+            ),
             "CURRENT_CONFIG_OK"
         );
         assert_eq!(
@@ -604,10 +721,81 @@ mod tests {
                 "LOOSE_RESPONSE_TEXT_OK",
                 false,
                 false,
-                false,
+                ModelSuccessKind::CurrentConfig,
                 false
             ),
             "LOOSE_RESPONSE_TEXT_OK"
+        );
+    }
+
+    #[test]
+    fn classifies_503_model_not_found_code() {
+        let body = r#"{"error":{"code":"model_not_found","message":"No available channel for model GLM-5.2[1M] under group default"}}"#;
+        assert_eq!(classify_http_failure(503, body), "MODEL_NOT_FOUND");
+        let (c, ev) = classify_with_evidence(503, body, Some("application/json"));
+        assert_eq!(c, "MODEL_NOT_FOUND");
+        assert!(ev.iter().any(|e| {
+            e.code.as_deref() == Some("model_not_found")
+                || e.matched_keyword.as_deref() == Some("model_not_found")
+                || e.matched_keyword
+                    .as_deref()
+                    .map(|k| k.contains("no available channel"))
+                    .unwrap_or(false)
+        }));
+    }
+
+    #[test]
+    fn classifies_503_no_available_channel_message() {
+        let body = r#"{"error":{"message":"No available channel for model foo-bar"}}"#;
+        assert_eq!(classify_http_failure(503, body), "MODEL_NOT_FOUND");
+    }
+
+    #[test]
+    fn generic_503_is_not_model_error() {
+        let body = r#"{"error":{"message":"upstream gateway timeout from nginx"}}"#;
+        let c = classify_http_failure(503, body);
+        assert_ne!(c, "MODEL_NOT_FOUND");
+        // nginx/bad gateway path or unknown
+        assert!(c == "GATEWAY_OR_WAF" || c == "UNKNOWN_ERROR", "got {c}");
+    }
+
+    #[test]
+    fn role_mapping_status_is_not_variant() {
+        assert_eq!(
+            final_status_from_attempts(
+                false,
+                true,
+                "GENERATE_OK",
+                false,
+                false,
+                ModelSuccessKind::ConfiguredRoleMapping,
+                false
+            ),
+            "CONFIGURED_MODEL_MAPPING_OK"
+        );
+        assert_eq!(
+            final_status_from_attempts(
+                false,
+                true,
+                "GENERATE_OK",
+                false,
+                false,
+                ModelSuccessKind::TrueVariant,
+                false
+            ),
+            "MODEL_VARIANT_OK"
+        );
+        assert_eq!(
+            final_status_from_attempts(
+                false,
+                true,
+                "GENERATE_OK",
+                false,
+                false,
+                ModelSuccessKind::DoctorGuess,
+                false
+            ),
+            "MODEL_GUESS_OK"
         );
     }
 }

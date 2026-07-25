@@ -147,7 +147,12 @@ pub fn client_model_for_app(app: AppType, provider: &NormalizedProvider) -> Stri
     provider
         .configured_model
         .clone()
-        .or_else(|| provider.model_candidates.first().cloned())
+        .or_else(|| {
+            provider
+                .model_candidates
+                .first()
+                .map(|c| c.wire_model.clone())
+        })
         .unwrap_or_else(|| crate::ccs_adapter::routing_profile::default_direct_model_guess(app))
 }
 
@@ -376,7 +381,9 @@ mod tests {
             api_key: SecretString::from("sk-real-secret-key-value"),
             configured_protocol: Some(ProtocolKind::OpenAiResponses),
             configured_model: Some("upstream-model".into()),
-            model_candidates: vec![],
+            model_candidates: vec![crate::ccs_adapter::ModelCandidate::from_configured_plain(
+                "upstream-model",
+            )],
             endpoint_candidates: vec![],
             custom_user_agent: None,
             needs_local_routing: None,

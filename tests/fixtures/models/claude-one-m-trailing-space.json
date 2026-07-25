@@ -1,0 +1,6 @@
+{
+  "configuredModel": "GLM-5.2[1M]  ",
+  "wireModel": "GLM-5.2",
+  "source": "local_marker_normalized",
+  "equivalentToCurrent": true
+}

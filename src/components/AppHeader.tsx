@@ -72,7 +72,7 @@ export function AppHeader({
           <div style={{ minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               <strong style={{ fontSize: 15 }}>CC Switch Doctor</strong>
-              <span className="badge primary">v{appInfo?.doctorVersion ?? "0.1.8"}</span>
+              <span className="badge primary">v{appInfo?.doctorVersion ?? "0.1.9"}</span>
             </div>
             <div className="muted" style={{ fontSize: 11, marginTop: 1 }}>
               只读扫描 · 纯 HTTP · 不启动 AI CLI

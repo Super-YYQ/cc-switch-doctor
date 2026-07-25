@@ -236,6 +236,24 @@ mod tests {
     }
 
     #[test]
+    fn provider_path_and_query_key_redacted_with_register() {
+        let key = "sk-secret-12345678";
+        let mut r = SecretRedactor::new();
+        r.register_key(key);
+        let path = sanitize_url_with_redactor(&format!("https://example.com/{key}/path"), &r);
+        assert!(!path.contains(key), "path leaked: {path}");
+        let q = sanitize_url_with_redactor("https://example.com/api?token=abc123tokenXYZ", &r);
+        assert!(!q.contains("abc123tokenXYZ"), "query leaked: {q}");
+        // URL-encoded key still redacted after decode-less path: register exact form too.
+        let enc = "sk%2Dsecret%2D12345678";
+        let mut r2 = SecretRedactor::new();
+        r2.register_key(key);
+        r2.register_key(enc);
+        let u = r2.redact(&format!("https://example.com/{enc}/v1"));
+        assert!(!u.contains(enc) || u.contains("***") || u.contains('…'));
+    }
+
+    #[test]
     fn truncate_utf8_cjk_and_emoji() {
         let s = "你好世界😀测试";
         let t = truncate_utf8(s, 7);

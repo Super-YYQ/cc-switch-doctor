@@ -142,6 +142,9 @@ export interface AttemptResult {
   responseCompatibility?: "native" | "cross_protocol" | "loose_field" | string | null;
   requestedProtocol?: string | null;
   matchedProtocol?: string | null;
+  configuredModelDisplay?: string | null;
+  outboundModel?: string | null;
+  modelTransform?: string | null;
 }
 
 export type RouteDisposition =
@@ -194,6 +197,8 @@ export interface ProviderDiagnosisSummary {
   safeBaseUrl: string;
   configuredProtocol?: string | null;
   configuredModel?: string | null;
+  outboundModel?: string | null;
+  modelTransform?: string | null;
   successUrl?: string | null;
   successProtocol?: string | null;
   successModel?: string | null;

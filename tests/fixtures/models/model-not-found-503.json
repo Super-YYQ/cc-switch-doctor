@@ -1,0 +1,10 @@
+{
+  "httpStatus": 503,
+  "body": {
+    "error": {
+      "code": "model_not_found",
+      "message": "No available channel for model GLM-5.2[1M] under group default"
+    }
+  },
+  "expectedClassification": "MODEL_NOT_FOUND"
+}

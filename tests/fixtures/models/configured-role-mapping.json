@@ -1,0 +1,8 @@
+{
+  "configuredModel": "primary-model-x",
+  "roleMapping": {
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-mapped-y"
+  },
+  "successModel": "sonnet-mapped-y",
+  "expectedStatus": "CONFIGURED_MODEL_MAPPING_OK"
+}
