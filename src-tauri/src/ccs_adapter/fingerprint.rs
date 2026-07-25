@@ -281,6 +281,31 @@ struct SchemaAllowEntry {
 /// Never used as the sole runtime gate for Provider scanning.
 const SCHEMA_ALLOWLIST: &[SchemaAllowEntry] = &[
     SchemaAllowEntry {
+        id: "ccs-schema-v16-providers-v318",
+        user_version: 16,
+        verification: VersionVerification::Verified,
+        required_tables: &["providers", "provider_endpoints", "settings"],
+        providers_columns: &[
+            "id",
+            "app_type",
+            "name",
+            "settings_config",
+            "website_url",
+            "category",
+            "created_at",
+            "sort_index",
+            "notes",
+            "icon",
+            "icon_color",
+            "meta",
+            "is_current",
+            "in_failover_queue",
+        ],
+        provider_endpoints_columns: &["id", "provider_id", "app_type", "url", "added_at"],
+        message: "Schema 与 CC Switch v3.18.0（user_version=16）已验证指纹匹配。v15→v16 迁移仅重建 Codex 会话用量，Provider 核心结构未变。",
+        cc_switch_version: "3.18.0",
+    },
+    SchemaAllowEntry {
         id: "ccs-schema-v15-providers-v317",
         user_version: 15,
         verification: VersionVerification::Verified,
@@ -841,10 +866,7 @@ mod tests {
         assert!(fp.status.can_test());
 
         let report = compute_compatibility_report(&conn).unwrap();
-        assert_eq!(
-            report.version_verification,
-            VersionVerification::Verified
-        );
+        assert_eq!(report.version_verification, VersionVerification::Verified);
         assert_eq!(
             report.capabilities.provider_scan.state,
             CapabilityState::Supported
@@ -874,9 +896,32 @@ mod tests {
     }
 
     #[test]
-    fn future_v16_same_core_is_structure_compatible() {
+    fn verified_v16_fingerprint() {
         let conn = Connection::open_in_memory().unwrap();
         seed_core_shape(&conn, 16);
+        let report = compute_compatibility_report(&conn).unwrap();
+        assert_eq!(report.version_verification, VersionVerification::Verified);
+        assert_eq!(report.observed_fingerprint, "ccs-schema-v16-providers-v318");
+        assert_eq!(
+            report.capabilities.provider_scan.state,
+            CapabilityState::Supported
+        );
+        assert_eq!(
+            report.capabilities.direct_diagnosis.state,
+            CapabilityState::Supported
+        );
+        assert!(report.can_test());
+        assert!(report.can_scan_providers());
+        let fp = compute_fingerprint(&conn).unwrap();
+        assert_eq!(fp.status, CompatibilityStatus::Verified);
+        assert!(fp.status.can_test());
+    }
+
+    #[test]
+    fn future_v19_same_core_is_structure_compatible() {
+        // Beyond the highest verified user_version; structure still wins.
+        let conn = Connection::open_in_memory().unwrap();
+        seed_core_shape(&conn, 19);
         let report = compute_compatibility_report(&conn).unwrap();
         assert_eq!(
             report.version_verification,
@@ -892,7 +937,6 @@ mod tests {
         );
         assert!(report.can_test());
         assert!(report.can_scan_providers());
-        // Legacy fingerprint still reports usable (Compatible) not Unknown-blocked
         let fp = SchemaFingerprint::from(&report);
         assert!(fp.status.can_test() || matches!(fp.status, CompatibilityStatus::Compatible));
     }

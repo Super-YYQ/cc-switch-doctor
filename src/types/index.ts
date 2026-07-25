@@ -32,6 +32,24 @@ export interface ProviderListItem {
   websiteUrl?: string | null;
 }
 
+export type CapabilityState = "supported" | "degraded" | "disabled";
+
+export interface CapabilityStatus {
+  state: CapabilityState;
+  reason: string;
+  missingTables: string[];
+  missingColumns: string[];
+  unverifiedColumns: string[];
+}
+
+export interface SchemaCapabilities {
+  providerScan: CapabilityStatus;
+  endpointScan: CapabilityStatus;
+  directDiagnosis: CapabilityStatus;
+  routingDiscovery: CapabilityStatus;
+  routingDiagnosis: CapabilityStatus;
+}
+
 export interface SchemaInfoView {
   fingerprintId: string;
   userVersion: number;
@@ -39,6 +57,10 @@ export interface SchemaInfoView {
   tables: string[];
   providersColumns: string[];
   message: string;
+  /** Independent version verification (not a runtime gate). */
+  versionVerification?: string | null;
+  capabilities?: SchemaCapabilities | null;
+  warnings?: string[] | null;
 }
 
 export interface DiscoveryInfo {

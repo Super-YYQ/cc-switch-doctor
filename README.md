@@ -74,9 +74,10 @@
 
 详见 [`docs/compatibility.md`](docs/compatibility.md) 与 [`compatibility/manifest.json`](compatibility/manifest.json)。
 
-- Baseline：CC Switch **v3.17.0**
-- Schema：`user_version = 15`
-- 检查日期：2026-07-20
+- Baseline：CC Switch **v3.18.0**（已验证）/ v3.17.0（已验证）/ v13（已知兼容）
+- Schema：`user_version = 16`（Verified）；未来未知版本在核心结构兼容时仍可扫描与直连
+- 架构：版本验证（Verified 标签）与结构能力检测（能否运行）完全分离
+- 检查日期：2026-07-25
 
 ## 构建
 

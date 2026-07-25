@@ -105,16 +105,8 @@ pub fn scan_database(
 
     let has_endpoints = report.capabilities.endpoint_scan.state != CapabilityState::Disabled
         && report.tables.iter().any(|t| t == "provider_endpoints")
-        && report
-            .capabilities
-            .endpoint_scan
-            .missing_tables
-            .is_empty()
-        && report
-            .capabilities
-            .endpoint_scan
-            .missing_columns
-            .is_empty();
+        && report.capabilities.endpoint_scan.missing_tables.is_empty()
+        && report.capabilities.endpoint_scan.missing_columns.is_empty();
     // Degraded endpoints may still have the table with partial columns — try load if table exists.
     let try_endpoints = report.tables.iter().any(|t| t == "provider_endpoints")
         && (has_endpoints
@@ -265,8 +257,7 @@ fn load_raw_providers(
         }
         if has_endpoints {
             // Endpoint load failure for one provider must not block others.
-            raw.endpoint_urls =
-                load_endpoints(conn, &raw.id, &raw.app_type).unwrap_or_default();
+            raw.endpoint_urls = load_endpoints(conn, &raw.id, &raw.app_type).unwrap_or_default();
         }
         let _ = SecretRedactor::default();
         out.push(raw);
@@ -431,5 +422,219 @@ mod tests {
         assert!(normalized
             .iter()
             .any(|p| p.display_name.contains("V13 Claude")));
+    }
+
+    fn write_sql_fixture(path: &Path, sql: &str) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(sql).unwrap();
+    }
+
+    #[test]
+    fn synthetic_v16_verified_scan() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        drop(tmp);
+        write_sql_fixture(
+            &path,
+            include_str!("../../../compatibility/fixtures/synthetic-v16.sql"),
+        );
+        let before = file_sha256(&path).unwrap();
+        let (view, _) = scan_database(Some(&path)).unwrap();
+        let after = file_sha256(&path).unwrap();
+        assert_eq!(before, after);
+        let schema = view.schema.as_ref().unwrap();
+        assert_eq!(schema.user_version, 16);
+        assert_eq!(schema.status, "verified");
+        assert_eq!(schema.version_verification.as_deref(), Some("verified"));
+        assert_eq!(schema.fingerprint_id, "ccs-schema-v16-providers-v318");
+        assert!(view.can_test);
+        assert!(!view.providers.is_empty());
+        let caps = schema.capabilities.as_ref().unwrap();
+        assert_eq!(
+            caps.provider_scan.state,
+            super::super::fingerprint::CapabilityState::Supported
+        );
+        assert_eq!(
+            caps.direct_diagnosis.state,
+            super::super::fingerprint::CapabilityState::Supported
+        );
+        let blob = serde_json::to_string(&view).unwrap();
+        assert!(!blob.contains("sk-test-fake-key-for-unit-tests-only"));
+    }
+
+    #[test]
+    fn future_v17_same_core_lists_providers() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        drop(tmp);
+        write_sql_fixture(
+            &path,
+            include_str!("../../../compatibility/fixtures/synthetic-future-v17-same-core.sql"),
+        );
+        let before = file_sha256(&path).unwrap();
+        let (view, _) = scan_database(Some(&path)).unwrap();
+        let after = file_sha256(&path).unwrap();
+        assert_eq!(before, after);
+        let schema = view.schema.as_ref().unwrap();
+        assert_eq!(schema.user_version, 17);
+        assert_eq!(
+            schema.version_verification.as_deref(),
+            Some("unverified_structure_compatible")
+        );
+        assert!(view.can_test);
+        assert!(view
+            .providers
+            .iter()
+            .any(|p| p.source_id == "v17-claude-1" && p.selectable));
+    }
+
+    #[test]
+    fn future_extra_columns_do_not_block() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        drop(tmp);
+        write_sql_fixture(
+            &path,
+            include_str!("../../../compatibility/fixtures/synthetic-future-extra-columns.sql"),
+        );
+        let (view, _) = scan_database(Some(&path)).unwrap();
+        assert!(view.can_test);
+        assert!(view
+            .providers
+            .iter()
+            .any(|p| p.source_id == "extra-claude-1"));
+        let schema = view.schema.as_ref().unwrap();
+        assert_eq!(schema.user_version, 18);
+        assert!(view.can_test);
+    }
+
+    #[test]
+    fn missing_required_column_disables_scan() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        drop(tmp);
+        write_sql_fixture(
+            &path,
+            include_str!(
+                "../../../compatibility/fixtures/synthetic-provider-required-column-missing.sql"
+            ),
+        );
+        let (view, _) = scan_database(Some(&path)).unwrap();
+        assert!(!view.can_test);
+        assert!(view.providers.is_empty());
+        let schema = view.schema.as_ref().unwrap();
+        let caps = schema.capabilities.as_ref().unwrap();
+        assert_eq!(
+            caps.provider_scan.state,
+            super::super::fingerprint::CapabilityState::Disabled
+        );
+        assert!(caps
+            .provider_scan
+            .missing_columns
+            .iter()
+            .any(|c| c == "settings_config"));
+    }
+
+    #[test]
+    fn endpoints_missing_settings_baseurl_degrades() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        drop(tmp);
+        write_sql_fixture(
+            &path,
+            include_str!(
+                "../../../compatibility/fixtures/synthetic-endpoints-missing-baseurl-in-settings.sql"
+            ),
+        );
+        let (view, _) = scan_database(Some(&path)).unwrap();
+        // Providers still listed
+        assert_eq!(view.providers.len(), 2);
+        let ok = view
+            .providers
+            .iter()
+            .find(|p| p.source_id == "ep-missing-ok")
+            .unwrap();
+        assert!(ok.selectable);
+        let no_url = view
+            .providers
+            .iter()
+            .find(|p| p.source_id == "ep-missing-no-url")
+            .unwrap();
+        assert!(!no_url.selectable);
+        let schema = view.schema.as_ref().unwrap();
+        let caps = schema.capabilities.as_ref().unwrap();
+        assert_eq!(
+            caps.endpoint_scan.state,
+            super::super::fingerprint::CapabilityState::Degraded
+        );
+        assert!(caps.direct_diagnosis.is_usable());
+        assert!(view.can_test);
+    }
+
+    #[test]
+    fn routing_unknown_provider_still_works() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        drop(tmp);
+        write_sql_fixture(
+            &path,
+            include_str!(
+                "../../../compatibility/fixtures/synthetic-routing-unknown-provider-compatible.sql"
+            ),
+        );
+        let (view, _) = scan_database(Some(&path)).unwrap();
+        assert!(view.can_test);
+        assert!(view
+            .providers
+            .iter()
+            .any(|p| p.source_id == "route-unknown-claude" && p.selectable));
+        let schema = view.schema.as_ref().unwrap();
+        let caps = schema.capabilities.as_ref().unwrap();
+        assert_eq!(
+            caps.routing_discovery.state,
+            super::super::fingerprint::CapabilityState::Disabled
+        );
+        assert_eq!(
+            caps.direct_diagnosis.state,
+            super::super::fingerprint::CapabilityState::Supported
+        );
+        // Routing status should carry warning, not wipe providers
+        assert!(view.routing.as_ref().is_some_and(|r| !r.config_detected));
+    }
+
+    #[test]
+    fn one_invalid_provider_does_not_block_others() {
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        drop(tmp);
+        write_sql_fixture(
+            &path,
+            include_str!("../../../compatibility/fixtures/synthetic-one-provider-invalid.sql"),
+        );
+        let (view, _) = scan_database(Some(&path)).unwrap();
+        assert_eq!(view.providers.len(), 3);
+        let a = view
+            .providers
+            .iter()
+            .find(|p| p.source_id == "ok-a")
+            .unwrap();
+        let b = view
+            .providers
+            .iter()
+            .find(|p| p.source_id == "ok-b")
+            .unwrap();
+        assert!(a.selectable);
+        assert!(b.selectable);
+        let bad = view
+            .providers
+            .iter()
+            .find(|p| p.source_id == "bad-settings")
+            .unwrap();
+        // Invalid JSON → no key/url → not selectable, but still listed
+        assert!(!bad.selectable);
+        assert!(view.can_test);
+        let blob = serde_json::to_string(&view).unwrap();
+        assert!(!blob.contains("sk-test-fake-key-for-ok-a-only"));
+        assert!(!blob.contains("sk-test-fake-key-for-ok-b-only"));
     }
 }

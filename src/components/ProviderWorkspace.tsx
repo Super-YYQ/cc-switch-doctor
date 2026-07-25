@@ -91,8 +91,10 @@ export function ProviderWorkspace({
   }, [menuOpen]);
 
   const emptyMessage = (() => {
-    if (schemaStatus === "unknown" || schemaStatus === "unsupported" || canTest === false) {
-      return "当前 Schema 未通过兼容检查，已停止读取 Provider 配置。";
+    // Empty-state guidance: only hard-block when capability says cannot test.
+    // Unknown version with usable structure still shows providers.
+    if (canTest === false || schemaStatus === "unsupported") {
+      return "当前数据库结构缺少 Provider 必需字段，已安全停止读取敏感配置。";
     }
     if (query.trim()) {
       return "没有匹配搜索条件的配置。";
