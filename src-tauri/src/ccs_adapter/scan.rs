@@ -1,4 +1,4 @@
-use super::fingerprint::{compute_fingerprint, CompatibilityStatus};
+use super::fingerprint::{compute_compatibility_report, CapabilityState};
 use super::models::{DiscoveryInfo, ProviderListItem, ProviderScanView, SchemaInfoView};
 use super::normalize::{normalize_provider, RawProviderRow};
 use super::path_discovery::discover_database_paths;
@@ -51,21 +51,26 @@ pub fn scan_database(
 
     let path = discovery.database_path.clone().unwrap();
     let conn = open_with_retry(&path)?;
-    let fp = compute_fingerprint(&conn)?;
+    let report = compute_compatibility_report(&conn)?;
 
     let schema_view = SchemaInfoView {
-        fingerprint_id: fp.id.clone(),
-        user_version: fp.user_version,
-        status: fp.status.as_str().to_string(),
-        tables: fp.tables.clone(),
-        providers_columns: fp.providers_columns.clone(),
-        message: fp.message.clone(),
+        fingerprint_id: report.observed_fingerprint.clone(),
+        user_version: report.user_version,
+        status: report.legacy_status().as_str().to_string(),
+        tables: report.tables.clone(),
+        providers_columns: report.providers_columns.clone(),
+        message: report.message.clone(),
+        version_verification: Some(report.version_verification.as_str().to_string()),
+        capabilities: Some(report.capabilities.clone()),
+        warnings: if report.warnings.is_empty() {
+            None
+        } else {
+            Some(report.warnings.clone())
+        },
     };
 
-    if matches!(
-        fp.status,
-        CompatibilityStatus::Unknown | CompatibilityStatus::Unsupported
-    ) {
+    // Gate Provider reading on structure capability, NOT exact version allowlist.
+    if !report.can_scan_providers() {
         return Ok((
             ProviderScanView {
                 discovery,
@@ -80,17 +85,63 @@ pub fn scan_database(
         ));
     }
 
-    // Read-only routing discovery (never fails the provider scan)
-    let routing = Some(super::routing::discover_routing_status_sync(&conn));
+    // Routing discovery only when routing capability is usable; never fails provider scan.
+    let routing = if report.capabilities.routing_discovery.is_usable() {
+        Some(super::routing::discover_routing_status_sync(&conn))
+    } else {
+        Some(super::routing::RoutingStatusView {
+            config_detected: false,
+            global_enabled: false,
+            listen_address: None,
+            listen_port: None,
+            health_reachable: false,
+            server_running: false,
+            failover_count: None,
+            apps: vec![],
+            warning: Some(report.capabilities.routing_discovery.reason.clone()),
+            connect_host: None,
+        })
+    };
 
-    let raws = load_raw_providers(
+    let has_endpoints = report.capabilities.endpoint_scan.state != CapabilityState::Disabled
+        && report.tables.iter().any(|t| t == "provider_endpoints")
+        && report
+            .capabilities
+            .endpoint_scan
+            .missing_tables
+            .is_empty()
+        && report
+            .capabilities
+            .endpoint_scan
+            .missing_columns
+            .is_empty();
+    // Degraded endpoints may still have the table with partial columns — try load if table exists.
+    let try_endpoints = report.tables.iter().any(|t| t == "provider_endpoints")
+        && (has_endpoints
+            || report.capabilities.endpoint_scan.state == CapabilityState::Degraded
+            || report.capabilities.endpoint_scan.state == CapabilityState::Supported);
+
+    let raws = match load_raw_providers(
         &conn,
-        &fp.providers_columns,
-        fp.tables.iter().any(|t| t == "provider_endpoints"),
-    )?;
+        &report.providers_columns,
+        try_endpoints && report.capabilities.endpoint_scan.missing_tables.is_empty(),
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            // Do not wipe the whole DB on a query failure if structure looked OK —
+            // surface empty list with message via schema.
+            let _ = e;
+            vec![]
+        }
+    };
+
     let mut normalized = Vec::with_capacity(raws.len());
     let mut list = Vec::with_capacity(raws.len());
     for raw in raws {
+        // Per-provider isolation: normalize never panics on bad JSON; skip empty ids.
+        if raw.id.trim().is_empty() {
+            continue;
+        }
         let n = normalize_provider(raw);
         list.push(ProviderListItem::from(&n));
         normalized.push(n);
@@ -109,7 +160,7 @@ pub fn scan_database(
             discovery,
             schema: Some(schema_view),
             providers: list,
-            can_test: fp.status.can_test(),
+            can_test: report.can_test(),
             scanned_at: Utc::now().to_rfc3339(),
             cc_switch_version_hint: read_version_hint(&conn),
             routing,
@@ -176,13 +227,18 @@ fn load_raw_providers(
 
     let rows = stmt
         .query_map([], |row| {
-            let id: String = row.get(0)?;
-            let app_type: String = row.get(1)?;
-            let name: String = row.get(2)?;
-            let settings_config: String = row.get(3)?;
-            let website_url: Option<String> = row.get(4)?;
-            let category: Option<String> = row.get(5)?;
-            let meta: String = row.get(6)?;
+            // Soft type coercion: bad row types become empty/default rather than failing the map.
+            let id: String = row.get::<_, String>(0).unwrap_or_default();
+            let app_type: String = row.get::<_, String>(1).unwrap_or_default();
+            let name: String = row.get::<_, String>(2).unwrap_or_default();
+            let settings_config: String = row.get::<_, String>(3).unwrap_or_default();
+            let website_url: Option<String> = row.get(4).ok().flatten();
+            let category: Option<String> = row.get(5).ok().flatten();
+            let meta: String = row
+                .get::<_, Option<String>>(6)
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "{}".into());
             let is_current: i64 = row.get::<_, i64>(7).unwrap_or(0);
             Ok(RawProviderRow {
                 id,
@@ -200,11 +256,18 @@ fn load_raw_providers(
 
     let mut out = Vec::new();
     for r in rows {
-        let mut raw = r.map_err(|e| PublicError::Database(e.to_string()))?;
-        if has_endpoints {
-            raw.endpoint_urls = load_endpoints(conn, &raw.id, &raw.app_type)?;
+        // Skip unreadable individual rows; do not abort the whole list.
+        let Ok(mut raw) = r else {
+            continue;
+        };
+        if raw.id.trim().is_empty() {
+            continue;
         }
-        // Redact accidental secrets from name? no
+        if has_endpoints {
+            // Endpoint load failure for one provider must not block others.
+            raw.endpoint_urls =
+                load_endpoints(conn, &raw.id, &raw.app_type).unwrap_or_default();
+        }
         let _ = SecretRedactor::default();
         out.push(raw);
     }
@@ -216,23 +279,30 @@ fn load_endpoints(
     provider_id: &str,
     app_type: &str,
 ) -> PublicResult<Vec<String>> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT url FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2 ORDER BY added_at ASC, url ASC",
-        )
-        .map_err(|e| PublicError::Database(e.to_string()))?;
-    let rows = stmt
-        .query_map(params![provider_id, app_type], |row| {
+    // Prefer ordered query; fall back if added_at is missing.
+    let sqls = [
+        "SELECT url FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2 ORDER BY added_at ASC, url ASC",
+        "SELECT url FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2 ORDER BY url ASC",
+        "SELECT url FROM provider_endpoints WHERE provider_id = ?1 AND app_type = ?2",
+    ];
+    for sql in sqls {
+        let Ok(mut stmt) = conn.prepare(sql) else {
+            continue;
+        };
+        let Ok(rows) = stmt.query_map(params![provider_id, app_type], |row| {
             row.get::<_, String>(0)
-        })
-        .map_err(|e| PublicError::Database(e.to_string()))?;
-    let mut out = Vec::new();
-    for u in rows.flatten() {
-        if !u.is_empty() {
-            out.push(u);
+        }) else {
+            continue;
+        };
+        let mut out = Vec::new();
+        for u in rows.flatten() {
+            if !u.is_empty() {
+                out.push(u);
+            }
         }
+        return Ok(out);
     }
-    Ok(out)
+    Ok(vec![])
 }
 
 fn read_version_hint(conn: &Connection) -> Option<String> {
