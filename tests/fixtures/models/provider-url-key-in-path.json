@@ -1,0 +1,5 @@
+{
+  "baseUrl": "https://example.com/sk-secret-12345678/path",
+  "apiKey": "sk-secret-12345678",
+  "mustNotContain": "sk-secret-12345678"
+}

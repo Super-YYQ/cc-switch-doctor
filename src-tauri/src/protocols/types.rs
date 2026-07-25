@@ -140,6 +140,15 @@ pub struct AttemptResult {
     /// Protocol shape that actually matched (may differ).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matched_protocol: Option<ProtocolKind>,
+    /// Configured / display model (may keep local `[1M]` marker).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configured_model_display: Option<String>,
+    /// Model value actually sent upstream (wire model).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outbound_model: Option<String>,
+    /// Human-readable transform note (e.g. local [1M] strip).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_transform: Option<String>,
 }
 
 impl AttemptResult {
@@ -176,6 +185,9 @@ impl AttemptResult {
             response_compatibility: None,
             requested_protocol: Some(protocol),
             matched_protocol: None,
+            configured_model_display: None,
+            outbound_model: None,
+            model_transform: None,
         }
     }
 
@@ -212,6 +224,9 @@ impl AttemptResult {
             response_compatibility: None,
             requested_protocol: Some(protocol),
             matched_protocol: None,
+            configured_model_display: None,
+            outbound_model: None,
+            model_transform: None,
         }
     }
 

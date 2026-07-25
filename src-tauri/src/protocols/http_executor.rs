@@ -73,6 +73,9 @@ impl HttpExecutor {
                 response_compatibility: None,
                 requested_protocol: None,
                 matched_protocol: None,
+                configured_model_display: None,
+                outbound_model: None,
+                model_transform: None,
             };
         }
 
@@ -106,6 +109,9 @@ impl HttpExecutor {
                         response_compatibility: None,
                         requested_protocol: None,
                         matched_protocol: None,
+                        configured_model_display: None,
+                        outbound_model: None,
+                        model_transform: None,
                     },
                     redactor,
                 );
@@ -156,6 +162,9 @@ impl HttpExecutor {
                     response_compatibility: None,
                     requested_protocol: None,
                     matched_protocol: None,
+                    configured_model_display: None,
+                    outbound_model: None,
+                    model_transform: None,
                 };
             }
             res = send_fut => res,
@@ -202,6 +211,9 @@ impl HttpExecutor {
                     response_compatibility: None,
                     requested_protocol: None,
                     matched_protocol: None,
+                    configured_model_display: None,
+                    outbound_model: None,
+                    model_transform: None,
                 };
             }
         };
@@ -253,6 +265,9 @@ impl HttpExecutor {
                 response_compatibility: None,
                 requested_protocol: None,
                 matched_protocol: None,
+                configured_model_display: None,
+                outbound_model: None,
+                model_transform: None,
             };
         }
 
@@ -302,6 +317,9 @@ impl HttpExecutor {
                     response_compatibility: None,
                     requested_protocol: None,
                     matched_protocol: None,
+                    configured_model_display: None,
+                    outbound_model: None,
+                    model_transform: None,
                 };
             }
         }
@@ -336,6 +354,9 @@ impl HttpExecutor {
                     response_compatibility: None,
                     requested_protocol: None,
                     matched_protocol: None,
+                    configured_model_display: None,
+                    outbound_model: None,
+                    model_transform: None,
                 };
             }
             Ok(BodyRead::Cancelled) => {
@@ -365,6 +386,9 @@ impl HttpExecutor {
                     response_compatibility: None,
                     requested_protocol: None,
                     matched_protocol: None,
+                    configured_model_display: None,
+                    outbound_model: None,
+                    model_transform: None,
                 };
             }
             Err(e) => {
@@ -394,6 +418,9 @@ impl HttpExecutor {
                     response_compatibility: None,
                     requested_protocol: None,
                     matched_protocol: None,
+                    configured_model_display: None,
+                    outbound_model: None,
+                    model_transform: None,
                 };
             }
         };
@@ -431,6 +458,9 @@ impl HttpExecutor {
                 response_compatibility: None,
                 requested_protocol: None,
                 matched_protocol: None,
+                configured_model_display: None,
+                outbound_model: None,
+                model_transform: None,
             };
         }
 
@@ -468,6 +498,9 @@ impl HttpExecutor {
                     response_compatibility: None,
                     requested_protocol: None,
                     matched_protocol: None,
+                    configured_model_display: None,
+                    outbound_model: None,
+                    model_transform: None,
                 };
             }
         }
@@ -518,6 +551,9 @@ impl HttpExecutor {
                     response_compatibility: None,
                     requested_protocol: None,
                     matched_protocol: None,
+                    configured_model_display: None,
+                    outbound_model: None,
+                    model_transform: None,
                 };
             }
         }
@@ -574,6 +610,9 @@ impl HttpExecutor {
                 response_compatibility: None,
                 requested_protocol: None,
                 matched_protocol: None,
+                configured_model_display: None,
+                outbound_model: None,
+                model_transform: None,
             };
         }
 
@@ -668,6 +707,9 @@ impl HttpExecutor {
                     response_compatibility: Some(compat),
                     requested_protocol: Some(req.protocol),
                     matched_protocol: Some(parsed_text.matched_protocol),
+                    configured_model_display: None,
+                    outbound_model: None,
+                    model_transform: None,
                 }
             }
             None => {
@@ -702,6 +744,9 @@ impl HttpExecutor {
                     response_compatibility: None,
                     requested_protocol: None,
                     matched_protocol: None,
+                    configured_model_display: None,
+                    outbound_model: None,
+                    model_transform: None,
                 }
             }
         }
@@ -759,6 +804,9 @@ impl HttpExecutor {
                         response_compatibility: None,
                         requested_protocol: Some(req.protocol),
                         matched_protocol: None,
+                        configured_model_display: None,
+                        outbound_model: None,
+                        model_transform: None,
                     };
                 }
             }
@@ -791,6 +839,9 @@ impl HttpExecutor {
                         response_compatibility: None,
                         requested_protocol: Some(req.protocol),
                         matched_protocol: None,
+                        configured_model_display: None,
+                        outbound_model: None,
+                        model_transform: None,
                     };
                 }
                 Ok(BodyRead::Cancelled) => {
@@ -820,6 +871,9 @@ impl HttpExecutor {
                         response_compatibility: None,
                         requested_protocol: Some(req.protocol),
                         matched_protocol: None,
+                        configured_model_display: None,
+                        outbound_model: None,
+                        model_transform: None,
                     };
                 }
                 Err(e) => {
@@ -849,6 +903,9 @@ impl HttpExecutor {
                         response_compatibility: None,
                         requested_protocol: Some(req.protocol),
                         matched_protocol: None,
+                        configured_model_display: None,
+                        outbound_model: None,
+                        model_transform: None,
                     };
                 }
             };
@@ -881,6 +938,9 @@ impl HttpExecutor {
                 response_compatibility: None,
                 requested_protocol: Some(req.protocol),
                 matched_protocol: None,
+                configured_model_display: None,
+                outbound_model: None,
+                model_transform: None,
             };
         }
 
@@ -928,6 +988,9 @@ impl HttpExecutor {
                     response_compatibility: None,
                     requested_protocol: None,
                     matched_protocol: None,
+                    configured_model_display: None,
+                    outbound_model: None,
+                    model_transform: None,
                 };
             }
 
@@ -970,6 +1033,9 @@ impl HttpExecutor {
                         response_compatibility: None,
                         requested_protocol: None,
                         matched_protocol: None,
+                        configured_model_display: None,
+                        outbound_model: None,
+                        model_transform: None,
                     };
                 }
             };
@@ -1051,6 +1117,9 @@ impl HttpExecutor {
                 response_compatibility: None,
                 requested_protocol: Some(req.protocol),
                 matched_protocol: None,
+                configured_model_display: None,
+                outbound_model: None,
+                model_transform: None,
             };
         }
         if text.is_empty() {
@@ -1144,6 +1213,9 @@ impl HttpExecutor {
                         }),
                         requested_protocol: Some(req.protocol),
                         matched_protocol: matched,
+                        configured_model_display: None,
+                        outbound_model: None,
+                        model_transform: None,
                     };
                 }
             }
@@ -1173,6 +1245,9 @@ impl HttpExecutor {
                 response_compatibility: None,
                 requested_protocol: Some(req.protocol),
                 matched_protocol: None,
+                configured_model_display: None,
+                outbound_model: None,
+                model_transform: None,
             };
         }
         let (ok, partial) = evaluate_text(&text);
@@ -1227,6 +1302,9 @@ impl HttpExecutor {
             }),
             requested_protocol: Some(req.protocol),
             matched_protocol: stream_matched_protocol.or(Some(req.protocol)),
+            configured_model_display: None,
+            outbound_model: None,
+            model_transform: None,
         }
     }
 }

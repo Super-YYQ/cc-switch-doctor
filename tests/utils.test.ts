@@ -92,6 +92,15 @@ describe("statusBadge", () => {
     expect(statusBadge("CCS_ROUTE_FAILED_DIRECT_OK").kind).toBe("warn");
     expect(statusBadge("CCS_ROUTE_AND_DIRECT_FAILED").kind).toBe("danger");
   });
+
+  // v0.1.9: model semantics copy
+  it("explains model variant / mapping / not-found clearly", () => {
+    expect(statusBadge("MODEL_VARIANT_OK").zh).toContain("其他模型可用");
+    expect(statusBadge("MODEL_VARIANT_OK").zh).not.toContain("更换模型后可用");
+    expect(statusBadge("CONFIGURED_MODEL_MAPPING_OK").zh).toContain("模型映射");
+    expect(statusBadge("MODEL_NOT_FOUND").zh).toContain("可用渠道");
+    expect(statusBadge("CURRENT_CONFIG_OK").zh).toBe("当前配置可直接使用");
+  });
 });
 
 describe("primaryStatusCode and routeDispositionLabel", () => {

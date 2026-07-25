@@ -252,6 +252,9 @@ mod tests {
             response_compatibility: None,
             requested_protocol: None,
             matched_protocol: None,
+            configured_model_display: None,
+            outbound_model: None,
+            model_transform: None,
         }
     }
 

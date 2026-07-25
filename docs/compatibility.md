@@ -10,7 +10,7 @@
 | Known compatible          | `user_version=13` (observed core shape)    |
 | Upstream baseline commit  | `878c26f31e012ba32b9772bd080bd4fa9e7d495e` |
 | SCHEMA_VERSION            | **16**                                     |
-| Doctor version            | 0.1.8                                      |
+| Doctor version            | 0.1.9                                      |
 
 Source: https://github.com/farion1231/cc-switch
 

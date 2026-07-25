@@ -224,6 +224,17 @@ export function ResultCard({ summary: s, onCopy }: Props) {
         <p>{s.suggestion}</p>
       </div>
 
+      {(s.configuredModel || s.outboundModel || s.modelTransform) && (
+        <div className="result-success-combo secondary">
+          <div className="section-title">模型语义</div>
+          {s.configuredModel && <div>配置值：{s.configuredModel}</div>}
+          {(s.outboundModel || s.successModel) && (
+            <div>上游值：{s.outboundModel || s.successModel}</div>
+          )}
+          {s.modelTransform && <div>规则：{s.modelTransform}</div>}
+        </div>
+      )}
+
       {(s.successProtocol || s.successUrl) && (
         <div className="result-success-combo secondary">
           <div className="section-title">成功组合</div>

@@ -1,3 +1,28 @@
+## [0.1.9] — 2026-07-25
+
+### Fixed
+
+- **P0:** Claude/CC Switch `[1M]` local context marker is stripped before upstream requests and treated as current-config success (`CURRENT_CONFIG_OK`), not `MODEL_VARIANT_OK`
+- Structured 5xx bodies with `error.code=model_not_found` / “No available channel for model” classify as `MODEL_NOT_FOUND` before generic 5xx fallback
+- Configured Provider role mappings succeed as `CONFIGURED_MODEL_MAPPING_OK` (not “更换模型后可用”)
+- Doctor-guessed models remain `MODEL_GUESS_OK` with `current_config_ok=false`
+- Final success evidence ranked by semantic quality (current / local-marker / role mapping before first-in-time success)
+- Provider card `safe_base_url` registers the real API key into `SecretRedactor` (path / query / non-sk keys)
+
+### Added
+
+- `ModelCandidate` + `ModelCandidateSource` (display / wire / source / equivalent_to_current)
+- Attempt + summary fields: `configuredModelDisplay`, `outboundModel`, `modelTransform`
+- Result Card “模型语义” section (配置值 / 上游值 / 规则)
+- Research gate: `docs/research/v0.1.9-model-semantics-review.md` (upstream `878c26f3…`)
+- Fixtures under `tests/fixtures/models/`
+
+### Security
+
+- SQLite remains read-only; no CLI spawn; no login-directory reads
+- Full keys still never enter frontend / logs / cache keys
+- Cross-host redirects still blocked; CCS route still loopback-only
+
 ## [0.1.8] — 2026-07-25
 
 ### Fixed

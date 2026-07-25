@@ -39,7 +39,16 @@ export function statusBadge(status: string): { label: string; kind: StatusKind; 
     CORRECTED_BASE_PATH_OK: { label: status, kind: "info", zh: "修正接口路径后可用" },
     PROTOCOL_FALLBACK_OK: { label: status, kind: "info", zh: "切换协议后可用" },
     AUTH_VARIANT_OK: { label: status, kind: "info", zh: "切换认证方式后可用" },
-    MODEL_VARIANT_OK: { label: status, kind: "info", zh: "更换模型后可用" },
+    MODEL_VARIANT_OK: {
+      label: status,
+      kind: "info",
+      zh: "当前模型不可用，其他模型可用",
+    },
+    CONFIGURED_MODEL_MAPPING_OK: {
+      label: status,
+      kind: "info",
+      zh: "当前 Provider 配置中的模型映射可用",
+    },
     MODEL_GUESS_OK: {
       label: status,
       kind: "info",
@@ -137,7 +146,11 @@ export function statusBadge(status: string): { label: string; kind: StatusKind; 
     AUTH_PERMISSION_DENIED: { label: status, kind: "danger", zh: "Key 有效性或权限不足" },
     QUOTA_EXHAUSTED: { label: status, kind: "warn", zh: "余额或额度不足" },
     RATE_LIMITED: { label: status, kind: "warn", zh: "请求被限流" },
-    MODEL_NOT_FOUND: { label: status, kind: "warn", zh: "模型不存在或无访问权限" },
+    MODEL_NOT_FOUND: {
+      label: status,
+      kind: "warn",
+      zh: "当前模型名或当前分组没有可用渠道",
+    },
     ENDPOINT_NOT_FOUND: { label: status, kind: "warn", zh: "接口路径不存在" },
     GATEWAY_OR_WAF: { label: status, kind: "danger", zh: "网关或安全验证页面阻断" },
     RESPONSE_FORMAT_MISMATCH: {

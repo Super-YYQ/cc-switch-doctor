@@ -1,0 +1,9 @@
+{
+  "httpStatus": 503,
+  "body": {
+    "error": {
+      "message": "No available channel for model foo-bar under group default"
+    }
+  },
+  "expectedClassification": "MODEL_NOT_FOUND"
+}

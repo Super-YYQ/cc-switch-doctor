@@ -1,5 +1,6 @@
 pub mod fingerprint;
 pub mod managed_auth;
+pub mod model_semantics;
 pub mod models;
 pub mod normalize;
 pub mod path_discovery;
@@ -12,6 +13,10 @@ pub use fingerprint::{
     compute_compatibility_report, compute_fingerprint, CapabilityState, CapabilityStatus,
     CompatibilityReport, CompatibilityStatus, SchemaCapabilities, SchemaFingerprint,
     VersionVerification,
+};
+pub use model_semantics::{
+    models_equivalent_after_local_normalize, strip_claude_one_m_marker, ModelCandidate,
+    ModelCandidateSource, ONE_M_CONTEXT_MARKER,
 };
 pub use models::{
     AppType, AuthKind, DiscoveryInfo, NormalizedProvider, ProtocolKind, ProviderKind,

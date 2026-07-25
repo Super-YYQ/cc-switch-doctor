@@ -123,7 +123,7 @@ impl AppState {
                     ),
                     configured_protocol: p.configured_protocol,
                     configured_model: p.configured_model.clone(),
-                    model_candidates: p.model_candidates.clone(),
+                    model_candidates: p.model_candidates.clone(), // ModelCandidate list
                     endpoint_candidates: p.endpoint_candidates.clone(),
                     custom_user_agent: p.custom_user_agent.clone(),
                     needs_local_routing: p.needs_local_routing,

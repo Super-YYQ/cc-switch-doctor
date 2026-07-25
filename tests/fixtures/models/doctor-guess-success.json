@@ -1,0 +1,7 @@
+{
+  "configuredModel": null,
+  "successModel": "claude-sonnet-5",
+  "source": "doctor_guess",
+  "expectedStatus": "MODEL_GUESS_OK",
+  "currentConfigOk": false
+}

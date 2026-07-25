@@ -1,9 +1,9 @@
-use super::classifier::{best_classification, final_status_from_attempts};
+use super::classifier::{best_classification, final_status_from_attempts, ModelSuccessKind};
 use super::outcome::{
     disposition_from_skip_message, CapabilityOutcome, DirectChannelSummary, RouteChannelSummary,
     RouteDisposition,
 };
-use super::planner::{plan_attempts, DiagnosisMode, PlannedAttempt};
+use super::planner::{plan_attempts, success_evidence_rank, DiagnosisMode, PlannedAttempt};
 use super::route_flight::{RouteFlight, RouteReservation};
 use super::route_planner::{
     build_route_request, combine_attempted_route_and_direct, plan_route_attempts, route_applicable,
@@ -13,6 +13,7 @@ use super::session_budget::{
     cache_key_from_built, key_fingerprint, provider_send_budget, OriginKey, SessionBudget,
 };
 use crate::ccs_adapter::routing::{active_provider_for_app, probe_status_only, RoutingStatusView};
+use crate::ccs_adapter::ModelCandidateSource;
 use crate::ccs_adapter::{NormalizedProvider, ProtocolKind};
 use crate::protocols::anthropic::build_anthropic_request;
 use crate::protocols::gemini::build_gemini_request_with_auth;
@@ -106,6 +107,12 @@ pub struct ProviderDiagnosisSummary {
     pub safe_base_url: String,
     pub configured_protocol: Option<String>,
     pub configured_model: Option<String>,
+    /// Wire / outbound model that succeeded (may differ from configured by [1M] strip).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outbound_model: Option<String>,
+    /// Human note about model transform (e.g. local [1M] normalization).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_transform: Option<String>,
     pub success_url: Option<String>,
     pub success_protocol: Option<String>,
     pub success_model: Option<String>,
@@ -166,6 +173,8 @@ pub async fn run_diagnosis(
                     safe_base_url: String::new(),
                     configured_protocol: None,
                     configured_model: None,
+                    outbound_model: None,
+                    model_transform: None,
                     success_url: None,
                     success_protocol: None,
                     success_model: None,
@@ -776,9 +785,11 @@ async fn diagnose_one(
 
         if result.ok {
             any_ok = true;
-            // Only native direct success on current config (non-guessed model)
-            // can set current_ok. Cross-protocol / loose must never do so.
-            let counts_as_current = plan.is_current_config
+            // Native direct success on a current-config-equivalent model
+            // (ConfiguredModel or LocalMarkerNormalized) sets current_ok.
+            // Cross-protocol / loose / DoctorGuess must never do so.
+            let counts_as_current = plan.equivalent_to_current
+                && plan.model_source.is_current_config_equivalent()
                 && !model_is_guessed
                 && result.is_native_success()
                 && !matches!(
@@ -791,7 +802,12 @@ async fn diagnose_one(
             if counts_as_current {
                 current_ok = true;
             }
-            if success_plan.is_none() {
+            // Prefer higher-quality success evidence over first-in-time success.
+            let take = match success_plan {
+                None => true,
+                Some(prev) => success_evidence_rank(plan) > success_evidence_rank(prev),
+            };
+            if take {
                 success_plan = Some(plan);
                 success_result = Some(result.clone());
             }
@@ -799,6 +815,7 @@ async fn diagnose_one(
                 && !plan.stream
                 && !plan.tool_call
                 && !plan.is_current_config
+                && !plan.equivalent_to_current
             {
                 stop_all = true;
             }
@@ -819,10 +836,24 @@ async fn diagnose_one(
     let url_changed = success_plan
         .map(|p| p.base_url.trim_end_matches('/') != provider.base_url.trim_end_matches('/'))
         .unwrap_or(false);
-    let model_changed = success_plan
-        .map(|p| Some(p.model.as_str()) != provider.configured_model.as_deref())
-        .unwrap_or(false)
-        || (model_is_guessed && any_ok && !current_ok);
+    let model_success_kind = success_plan
+        .map(|p| match p.model_source {
+            ModelCandidateSource::ConfiguredModel | ModelCandidateSource::LocalMarkerNormalized => {
+                ModelSuccessKind::CurrentConfig
+            }
+            ModelCandidateSource::ConfiguredRoleMapping => ModelSuccessKind::ConfiguredRoleMapping,
+            ModelCandidateSource::DoctorGuess => ModelSuccessKind::DoctorGuess,
+            ModelCandidateSource::DiscoveredModel => ModelSuccessKind::TrueVariant,
+        })
+        .unwrap_or_else(|| {
+            if model_is_guessed && any_ok && !current_ok {
+                ModelSuccessKind::DoctorGuess
+            } else if any_ok && !current_ok {
+                ModelSuccessKind::TrueVariant
+            } else {
+                ModelSuccessKind::CurrentConfig
+            }
+        });
 
     let needs_local = if provider.app_type == crate::ccs_adapter::AppType::Codex {
         if let Some(sp) = success_plan {
@@ -899,7 +930,7 @@ async fn diagnose_one(
             &best_class,
             protocol_changed,
             url_changed,
-            model_changed,
+            model_success_kind,
             needs_local,
         )
     };
@@ -907,9 +938,11 @@ async fn diagnose_one(
         && any_ok
         && !current_ok
         && direct_status != "LOCAL_ROUTING_REQUIRED"
+        && direct_status != "CONFIGURED_MODEL_MAPPING_OK"
         && (direct_status == "CURRENT_CONFIG_OK"
             || direct_status == "MODEL_VARIANT_OK"
             || direct_status == "AUTH_VARIANT_OK"
+            || direct_status == "MODEL_GUESS_OK"
             || (!protocol_changed && !url_changed))
     {
         direct_status = "MODEL_GUESS_OK".into();
@@ -1151,6 +1184,23 @@ async fn diagnose_one(
         safe_base_url: provider.safe_base_url.clone(),
         configured_protocol: provider.configured_protocol.map(|p| p.label().to_string()),
         configured_model: provider.configured_model.clone(),
+        outbound_model: success_plan.map(|p| p.model.clone()).or_else(|| {
+            success_result
+                .as_ref()
+                .and_then(|r| r.outbound_model.clone())
+        }),
+        model_transform: success_plan.and_then(|p| {
+            p.model_candidate()
+                .transform_label()
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    if p.display_model != p.model {
+                        Some(format!("{} → {}", p.display_model, p.model))
+                    } else {
+                        None
+                    }
+                })
+        }),
         success_url: success_result.as_ref().map(|r| r.url.clone()),
         success_protocol: success_plan.map(|p| p.protocol.label().to_string()),
         success_model: success_plan.map(|p| p.model.clone()),
@@ -1229,6 +1279,9 @@ async fn execute_plan(
             response_compatibility: None,
             requested_protocol: None,
             matched_protocol: None,
+            configured_model_display: None,
+            outbound_model: None,
+            model_transform: None,
         };
     }
 
@@ -1310,6 +1363,9 @@ async fn execute_plan(
                 response_compatibility: None,
                 requested_protocol: None,
                 matched_protocol: None,
+                configured_model_display: None,
+                outbound_model: None,
+                model_transform: None,
             };
         }
     };
@@ -1357,6 +1413,9 @@ async fn execute_plan(
                 response_compatibility: None,
                 requested_protocol: None,
                 matched_protocol: None,
+                configured_model_display: None,
+                outbound_model: None,
+                model_transform: None,
             },
         };
     }
@@ -1401,6 +1460,9 @@ async fn execute_plan(
             response_compatibility: None,
             requested_protocol: None,
             matched_protocol: None,
+            configured_model_display: None,
+            outbound_model: None,
+            model_transform: None,
         };
         session_budget.finish_flight(&cache_key, r.clone());
         return r;
@@ -1411,6 +1473,16 @@ async fn execute_plan(
         .execute(built, origin_policy, redactor, cancel, timeout)
         .await;
     result.token_limit_field = token_for_key;
+    // Always record configured vs outbound model semantics on the attempt.
+    result.configured_model_display = Some(plan.display_model.clone());
+    result.outbound_model = Some(plan.model.clone());
+    result.model_transform = plan
+        .model_candidate()
+        .transform_label()
+        .map(|s| s.to_string());
+    if result.model_transform.is_none() && plan.display_model != plan.model {
+        result.model_transform = Some(format!("{} → {}", plan.display_model, plan.model));
+    }
 
     if !result.http_sent {
         session_budget.release_unsent(origin_key);
@@ -1430,6 +1502,17 @@ fn build_suggestion(
     status: &str,
 ) -> String {
     if current_ok {
+        if let Some(s) = success {
+            if s.model_source == ModelCandidateSource::LocalMarkerNormalized
+                || s.display_model != s.model
+            {
+                return format!(
+                    "当前配置可用。`[1M]` 是 Claude/CC Switch 的本地上下文能力标记，发送上游时已按 CC Switch 规则使用 `{}`（配置值：{}）。无需更换模型或修改配置。本工具未修改任何配置。",
+                    s.model,
+                    s.display_model
+                );
+            }
+        }
         return format!(
             "当前配置可用。Base URL：{}，协议：{}，模型：{}。本工具未修改任何配置。",
             provider.safe_base_url,
@@ -1442,6 +1525,31 @@ fn build_suggestion(
     }
     if let Some(s) = success {
         if any_ok {
+            match s.model_source {
+                ModelCandidateSource::ConfiguredRoleMapping => {
+                    return format!(
+                        "当前 Provider 配置中的模型映射可用。成功模型：{}（来自当前 CC Switch Provider 的角色模型映射）。无需修改配置。本工具未自动修改任何配置。",
+                        s.model
+                    );
+                }
+                ModelCandidateSource::DoctorGuess => {
+                    return format!(
+                        "使用 Doctor 推测模型 `{}` 测试成功，但不能证明 CC Switch 当前模型配置可用。本工具未自动修改任何配置。",
+                        s.model
+                    );
+                }
+                ModelCandidateSource::DiscoveredModel
+                | ModelCandidateSource::ConfiguredModel
+                | ModelCandidateSource::LocalMarkerNormalized => {
+                    if !s.equivalent_to_current {
+                        let current = provider.configured_model.as_deref().unwrap_or("—");
+                        return format!(
+                            "当前模型不可用，其他模型可用。当前模型：{}；成功模型：{}。建议在 CC Switch 中确认模型名。本工具未自动修改任何配置。",
+                            current, s.model
+                        );
+                    }
+                }
+            }
             let mut msg = format!(
                 "供应商、Key 与模型可用，但当前配置未直接成功。成功组合：Base URL = {}，协议 = {}，模型 = {}。",
                 crate::security::sanitize_url_for_display(&s.base_url),
@@ -1458,7 +1566,7 @@ fn build_suggestion(
         }
     }
     match status {
-        "KEY_INVALID" => {
+        "KEY_INVALID" | "AUTH_INVALID" => {
             "鉴权失败：API Key 无效或未授权。请在 CC Switch 中更新 Key。本工具未修改配置。".into()
         }
         "QUOTA_EXHAUSTED" => "额度不足或配额耗尽。请检查供应商余额。本工具未修改配置。".into(),
@@ -1468,7 +1576,9 @@ fn build_suggestion(
         "HOST_BUDGET_EXHAUSTED" => {
             "该 Host 在本次诊断会话中已达到 30 次请求上限。本工具未修改配置。".into()
         }
-        "MODEL_NOT_FOUND" => "模型不存在或无权访问。请检查模型名映射。本工具未修改配置。".into(),
+        "MODEL_NOT_FOUND" => {
+            "当前模型名或当前分组没有可用渠道。请检查模型名映射与分组。本工具未修改配置。".into()
+        }
         "ENDPOINT_NOT_FOUND" => {
             "端点不存在（404）。可尝试在智能诊断中修正 /v1 或协议。本工具未修改配置。".into()
         }
@@ -1477,6 +1587,9 @@ fn build_suggestion(
             "TLS/证书错误。请通过系统信任链修复证书，不要关闭校验。本工具未修改配置。".into()
         }
         "MANAGED_AUTH_SKIPPED" => "托管登录/OAuth 配置已安全跳过。".into(),
+        "CONFIGURED_MODEL_MAPPING_OK" => {
+            "当前 Provider 配置中的模型映射可用。无需修改配置。本工具未修改任何配置。".into()
+        }
         _ => format!("诊断状态：{status}。请查看尝试链与错误摘要。本工具未修改任何配置。"),
     }
 }
