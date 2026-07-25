@@ -254,10 +254,20 @@ pub struct DiscoveryInfo {
 pub struct SchemaInfoView {
     pub fingerprint_id: String,
     pub user_version: i32,
+    /// Legacy status string (verified/compatible/unknown/unsupported).
     pub status: String,
     pub tables: Vec<String>,
     pub providers_columns: Vec<String>,
     pub message: String,
+    /// Independent version verification (verified / known_compatible /
+    /// unverified_structure_compatible / unknown).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_verification: Option<String>,
+    /// Capability-level report (provider/endpoint/direct/routing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<crate::ccs_adapter::fingerprint::SchemaCapabilities>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warnings: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -266,6 +276,7 @@ pub struct ProviderScanView {
     pub discovery: DiscoveryInfo,
     pub schema: Option<SchemaInfoView>,
     pub providers: Vec<ProviderListItem>,
+    /// Capability-based: true when provider_scan + direct_diagnosis are usable.
     pub can_test: bool,
     pub scanned_at: String,
     pub cc_switch_version_hint: Option<String>,

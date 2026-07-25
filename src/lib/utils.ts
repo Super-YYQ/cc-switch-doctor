@@ -388,6 +388,61 @@ export function schemaLabel(status?: string | null): string {
   return "Schema —";
 }
 
+export function versionVerificationLabel(v?: string | null): string {
+  switch (v) {
+    case "verified":
+      return "已验证";
+    case "known_compatible":
+      return "已知兼容";
+    case "unverified_structure_compatible":
+      return "结构兼容（尚未完整验证）";
+    case "unknown":
+      return "未知";
+    default:
+      return "—";
+  }
+}
+
+export function versionVerificationKind(v?: string | null): StatusKind {
+  switch (v) {
+    case "verified":
+      return "ok";
+    case "known_compatible":
+    case "unverified_structure_compatible":
+      return "warn";
+    case "unknown":
+      return "schema";
+    default:
+      return "skip";
+  }
+}
+
+export function capabilityLabel(state?: string | null): string {
+  switch (state) {
+    case "supported":
+      return "可用";
+    case "degraded":
+      return "降级可用";
+    case "disabled":
+      return "不可用";
+    default:
+      return "—";
+  }
+}
+
+export function capabilityKind(state?: string | null): StatusKind {
+  switch (state) {
+    case "supported":
+      return "ok";
+    case "degraded":
+      return "warn";
+    case "disabled":
+      return "danger";
+    default:
+      return "skip";
+  }
+}
+
 export function defaultSelectedIds(providers: ProviderListItem[]): Set<string> {
   return new Set(providers.filter((p) => p.isCurrent && p.selectable).map((p) => p.opaqueId));
 }

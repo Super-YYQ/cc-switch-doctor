@@ -1,27 +1,60 @@
 {
-  "manifestVersion": 1,
-  "doctorVersion": "0.1.7",
-  "verifiedAt": "2026-07-20T14:30:00Z",
-  "checkedAt": "2026-07-21",
+  "manifestVersion": 2,
+  "doctorVersion": "0.1.8",
+  "verifiedAt": "2026-07-25T12:00:00Z",
+  "checkedAt": "2026-07-25",
   "ccSwitch": {
     "repository": "https://github.com/farion1231/cc-switch",
-    "latestObservedRelease": "3.17.0",
-    "latestVerifiedRelease": "3.17.0",
-    "latestObservedReleasePublishedAt": "2026-07-13T16:05:55Z",
-    "latestMainCommit": "606e7bbe75db7f8285f7a3be006fac22b5d22796",
-    "latestMainCommitDate": "2026-07-21T15:14:45Z",
-    "baselineCommit": "3d176b98cc0bfd151a42882e88ab59b62083b92f",
-    "baselineTag": "v3.17.0",
-    "schemaVersion": 15,
-    "verifiedReleases": ["3.17.0"],
-    "compatibleReleasePrefixes": ["3.17.", "3.18."],
+    "latestObservedRelease": "3.18.0",
+    "latestVerifiedRelease": "3.18.0",
+    "latestObservedReleasePublishedAt": "2026-07-20T00:00:00Z",
+    "latestMainCommit": "878c26f31e012ba32b9772bd080bd4fa9e7d495e",
+    "latestMainCommitDate": "2026-07-20T00:00:00Z",
+    "baselineCommit": "878c26f31e012ba32b9772bd080bd4fa9e7d495e",
+    "baselineTag": "v3.18.0",
+    "schemaVersion": 16,
+    "verifiedReleases": ["3.17.0", "3.18.0"],
+    "compatibleReleasePrefixes": ["3.17.", "3.18.", "3.19."],
     "defaultDataDir": "~/.cc-switch/",
     "databaseFile": "cc-switch.db",
     "schemaFingerprints": [
       {
+        "id": "ccs-schema-v16-providers-v318",
+        "status": "verified",
+        "userVersion": 16,
+        "ccSwitchVersion": "3.18.0",
+        "upstreamCommit": "878c26f31e012ba32b9772bd080bd4fa9e7d495e",
+        "providerShapeId": "provider-core-v1",
+        "endpointShapeId": "endpoint-core-v1",
+        "routingProfileId": "ccs-routing-v318",
+        "requiredTables": ["providers", "provider_endpoints", "settings"],
+        "providersColumns": [
+          "id",
+          "app_type",
+          "name",
+          "settings_config",
+          "website_url",
+          "category",
+          "created_at",
+          "sort_index",
+          "notes",
+          "icon",
+          "icon_color",
+          "meta",
+          "is_current",
+          "in_failover_queue"
+        ],
+        "providerEndpointsColumns": ["id", "provider_id", "app_type", "url", "added_at"],
+        "notes": "v15→v16 migration rebuilds Codex session usage only; Provider core shape unchanged."
+      },
+      {
         "id": "ccs-schema-v15-providers-v317",
         "status": "verified",
         "userVersion": 15,
+        "ccSwitchVersion": "3.17.0",
+        "providerShapeId": "provider-core-v1",
+        "endpointShapeId": "endpoint-core-v1",
+        "routingProfileId": "ccs-routing-v317",
         "requiredTables": ["providers", "provider_endpoints", "settings"],
         "providersColumns": [
           "id",
@@ -45,6 +78,8 @@
         "id": "ccs-schema-v13-providers-core",
         "status": "compatible",
         "userVersion": 13,
+        "providerShapeId": "provider-core-v1",
+        "endpointShapeId": "endpoint-core-v1",
         "requiredTables": ["providers", "provider_endpoints"],
         "providersColumns": [
           "id",
@@ -64,7 +99,26 @@
         ],
         "providerEndpointsColumns": ["id", "provider_id", "app_type", "url", "added_at"]
       }
-    ]
+    ],
+    "capabilityShapes": {
+      "provider-core-v1": {
+        "requiredColumns": ["id", "app_type", "name", "settings_config", "meta", "is_current"],
+        "optionalColumns": [
+          "website_url",
+          "category",
+          "created_at",
+          "sort_index",
+          "notes",
+          "icon",
+          "icon_color",
+          "in_failover_queue"
+        ]
+      },
+      "endpoint-core-v1": {
+        "requiredColumns": ["provider_id", "app_type", "url"],
+        "optionalColumns": ["id", "added_at"]
+      }
+    }
   },
   "supportedAppTypes": [
     "claude",
@@ -84,8 +138,36 @@
     "official_subscription",
     "oauth_refresh_token"
   ],
-  "rulesVersion": "1",
+  "rulesVersion": "2",
   "routingProfiles": [
+    {
+      "id": "ccs-routing-v318",
+      "ccSwitchCommit": "878c26f31e012ba32b9772bd080bd4fa9e7d495e",
+      "releaseRange": "3.18.x",
+      "placeholderToken": "PROXY_MANAGED",
+      "claudeClientModels": {
+        "haiku": "claude-haiku-4-5",
+        "sonnet": "claude-sonnet-5",
+        "opus": "claude-opus-4-8",
+        "fable": "claude-fable-5"
+      },
+      "defaultRouteModelByApp": {
+        "claude": "claude-sonnet-5",
+        "claude-desktop": "claude-sonnet-5",
+        "codex": "gpt-5.5",
+        "gemini": "gemini-3.5-flash"
+      },
+      "routes": {
+        "claude": ["/v1/messages"],
+        "claude-desktop": ["/v1/messages"],
+        "codex": ["/v1/responses", "/v1/chat/completions"],
+        "gemini": ["/v1beta/models/{model}:generateContent"]
+      },
+      "sources": [
+        "upstream commit 878c26f31e012ba32b9772bd080bd4fa9e7d495e (CC Switch 3.18.0)",
+        "docs/research/v0.1.7-source-review.md"
+      ]
+    },
     {
       "id": "ccs-main-606e7bb-2026-07-21",
       "ccSwitchCommit": "606e7bbe75db7f8285f7a3be006fac22b5d22796",
@@ -118,10 +200,12 @@
     }
   ],
   "notes": [
-    "Baseline verified against farion1231/cc-switch v3.17.0 (annotated tag object 751793f..., target commit 3d176b9...).",
-    "Main branch head at check time: 606e7bbe (2026-07-21) — routingProfiles pin client role aliases from DEFAULT_PROXY_ROUTES.",
-    "latestObservedRelease tracks upstream monitoring; latestVerifiedRelease is what Doctor uses for UI/compat conclusions.",
-    "Claude route probes use role aliases (claude-sonnet-5 etc.), not dated IDs like claude-sonnet-4-20250514.",
+    "v0.1.8: Version verification is independent from runtime capability detection.",
+    "Exact allowlist entries only drive the Verified label; Provider scan uses required core columns.",
+    "CC Switch 3.18.0 / user_version=16 verified against upstream commit 878c26f31e012ba32b9772bd080bd4fa9e7d495e.",
+    "v15→v16 migration rebuilds Codex session usage data only — not a Provider structure break.",
+    "Future unknown user_version with compatible core structures continues Provider scan and direct diagnosis.",
+    "Routing capability degrades independently from Provider/Direct.",
     "Doctor never writes to CC Switch database and never launches AI CLIs."
   ]
 }

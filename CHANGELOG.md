@@ -1,3 +1,28 @@
+## [0.1.8] — 2026-07-25
+
+### Fixed
+
+- **P0:** Unknown CC Switch `user_version` no longer empties Provider list or blocks direct diagnosis when core structures remain compatible
+- Version verification separated from runtime capability detection (Verified label ≠ can-run gate)
+- Routing structure failures degrade routing only; Provider scan and Direct Diagnosis continue
+- Single Provider `settings_config` parse failure no longer blocks other Providers
+- Missing optional provider columns degrade instead of failing the whole schema allowlist match
+- Endpoint table absence falls back to `settings_config` Base URL extraction (Degraded)
+
+### Added
+
+- Capability model: `VersionVerification`, `SchemaCapabilities`, `CapabilityStatus` (`supported` / `degraded` / `disabled`)
+- CC Switch **3.18.0 / schema v16** verified entry (upstream commit `878c26f31e012ba32b9772bd080bd4fa9e7d495e`)
+- Future-version structure compatibility path (`UnverifiedStructureCompatible`)
+- Synthetic fixtures: v16, future v17 same-core, extra columns, required-column missing, endpoints missing, routing unknown, one-provider-invalid
+- Header UI shows version verification and Provider / Direct / Routing capability badges separately
+
+### Security
+
+- Required core columns still required; missing `settings_config` disables sensitive reads
+- Capability fail-closed for affected sensitive features only
+- SQLite remains read-only; no `user_version` writes; no full keys in frontend
+
 ## [0.1.7] — 2026-07-21
 
 ### Fixed

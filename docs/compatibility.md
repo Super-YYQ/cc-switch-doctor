@@ -2,22 +2,47 @@
 
 ## Check record
 
-| Field                        | Value                                      |
-| ---------------------------- | ------------------------------------------ |
-| Checked at                   | 2026-07-20                                 |
-| CC Switch latest release     | **v3.17.0** (published 2026-07-13)         |
-| Baseline commit (tag target) | `3d176b98cc0bfd151a42882e88ab59b62083b92f` |
-| main HEAD at check           | `613fef70bc7d5e35299b4131935f738c85765b35` |
-| SCHEMA_VERSION               | **15**                                     |
-| Doctor version               | 0.1.1                                      |
+| Field                     | Value                                      |
+| ------------------------- | ------------------------------------------ |
+| Checked at                | 2026-07-25                                 |
+| CC Switch latest verified | **v3.18.0**                                |
+| Also verified             | v3.17.0 (`user_version=15`)                |
+| Known compatible          | `user_version=13` (observed core shape)    |
+| Upstream baseline commit  | `878c26f31e012ba32b9772bd080bd4fa9e7d495e` |
+| SCHEMA_VERSION            | **16**                                     |
+| Doctor version            | 0.1.8                                      |
 
 Source: https://github.com/farion1231/cc-switch
 
-## Schema fingerprint (verified)
+## Architecture (v0.1.8)
+
+```text
+Exact version allowlist + upstream commit manifest
+→ Verified label only (regression, release notes, upstream watch)
+
+Runtime structural capability detection
+→ Gates Provider Scan / Endpoint Scan / Direct Diagnosis /
+  Routing Discovery / Routing Diagnosis
+```
+
+Rules:
+
+- Unknown `user_version` ≠ structure incompatible
+- New optional columns / unrelated tables → continue
+- Missing required columns → disable only the affected capability
+- Routing structure unknown → disable routing only
+- Single Provider parse failure → skip that Provider only
+
+## Schema fingerprint (verified v16 / v15)
 
 - Tables: `providers`, `provider_endpoints`, `settings` (+ others ignored)
-- `providers` columns include: id, app_type, name, settings_config, meta, is_current, …
-- Credential extraction mirrors CC Switch `resolve_usage_credentials` shapes per app_type
+- `providers` required: id, app_type, name, settings_config, meta, is_current
+- `provider_endpoints` required: provider_id, app_type, url
+- v15 → v16 migration rebuilds Codex session usage only; Provider core unchanged
+
+## Capability shapes
+
+See `capabilityShapes` in [`../compatibility/manifest.json`](../compatibility/manifest.json).
 
 ## Supported app_type values
 
@@ -33,8 +58,9 @@ Source: https://github.com/farion1231/cc-switch
 
 1. Read latest CC Switch release notes + `database/mod.rs` SCHEMA_VERSION
 2. Diff `schema.rs` / provider credential paths
-3. Update fixtures + `compatibility/manifest.json`
-4. Run cargo tests + security gates
-5. Only then mark verified
+3. Update fixtures + `compatibility/manifest.json` (Verified entry only)
+4. Confirm capability shapes still cover required core columns
+5. Run cargo tests + security gates
+6. Only then mark verified — unknown versions with compatible structure keep working without a Doctor release
 
 Machine-readable: [`../compatibility/manifest.json`](../compatibility/manifest.json)

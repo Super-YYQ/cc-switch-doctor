@@ -191,19 +191,19 @@ mod tests {
     #[test]
     fn verified_reads_verified_field_not_observed() {
         let v = load_verified_release();
-        assert_eq!(v, "3.17.0");
+        assert_eq!(v, "3.18.0");
     }
 
     #[test]
     fn message_when_newer_not_verified() {
-        let msg = format_cc_switch_status("3.18.0", "3.17.0", "3.18.0");
+        let msg = format_cc_switch_status("3.19.0", "3.18.0", "3.19.0");
         assert!(msg.contains("尚未完成兼容验证"));
         assert!(!msg.contains("与已验证基线一致或兼容"));
     }
 
     #[test]
     fn message_when_same_verified() {
-        let msg = format_cc_switch_status("3.17.0", "3.17.0", "3.17.0");
+        let msg = format_cc_switch_status("3.18.0", "3.18.0", "3.18.0");
         assert!(msg.contains("已验证"));
         assert!(!msg.contains("尚未完成兼容验证"));
     }

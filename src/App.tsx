@@ -36,12 +36,50 @@ const DEMO_SCAN: ProviderScanView = {
     source: "demo",
   },
   schema: {
-    fingerprintId: "demo-v15",
-    userVersion: 15,
+    fingerprintId: "demo-v16",
+    userVersion: 16,
     status: "verified",
     tables: ["providers", "provider_endpoints", "settings"],
     providersColumns: ["id", "app_type", "name", "settings_config", "meta", "is_current"],
-    message: "Schema 与 CC Switch v3.17.0（user_version=15）已验证指纹匹配。",
+    message: "Schema 与 CC Switch v3.18.0（user_version=16）已验证指纹匹配。",
+    versionVerification: "verified",
+    capabilities: {
+      providerScan: {
+        state: "supported",
+        reason: "providers 核心与推荐字段完整。",
+        missingTables: [],
+        missingColumns: [],
+        unverifiedColumns: [],
+      },
+      endpointScan: {
+        state: "supported",
+        reason: "provider_endpoints 结构完整。",
+        missingTables: [],
+        missingColumns: [],
+        unverifiedColumns: [],
+      },
+      directDiagnosis: {
+        state: "supported",
+        reason: "可执行上游直连诊断。",
+        missingTables: [],
+        missingColumns: [],
+        unverifiedColumns: [],
+      },
+      routingDiscovery: {
+        state: "supported",
+        reason: "proxy_config 结构完整，可读取路由状态。",
+        missingTables: [],
+        missingColumns: [],
+        unverifiedColumns: [],
+      },
+      routingDiagnosis: {
+        state: "supported",
+        reason: "路由结构可读取。",
+        missingTables: [],
+        missingColumns: [],
+        unverifiedColumns: [],
+      },
+    },
   },
   providers: [
     {
@@ -94,7 +132,7 @@ const DEMO_SCAN: ProviderScanView = {
   ],
   canTest: true,
   scannedAt: new Date().toISOString(),
-  ccSwitchVersionHint: "3.17.0",
+  ccSwitchVersionHint: "3.18.0",
 };
 
 export default function App() {
@@ -337,7 +375,10 @@ export default function App() {
         return;
       }
       if (!scan?.canTest) {
-        setError("当前 schema 未通过兼容检查，已安全停止测试。");
+        setError(
+          scan?.schema?.capabilities?.directDiagnosis?.reason ||
+            "当前数据库结构无法安全执行上游直连诊断。",
+        );
         return;
       }
       const ids = [...selected];

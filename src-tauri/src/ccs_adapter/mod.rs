@@ -8,7 +8,11 @@ pub mod routing;
 pub mod routing_profile;
 pub mod scan;
 
-pub use fingerprint::{compute_fingerprint, CompatibilityStatus, SchemaFingerprint};
+pub use fingerprint::{
+    compute_compatibility_report, compute_fingerprint, CapabilityState, CapabilityStatus,
+    CompatibilityReport, CompatibilityStatus, SchemaCapabilities, SchemaFingerprint,
+    VersionVerification,
+};
 pub use models::{
     AppType, AuthKind, DiscoveryInfo, NormalizedProvider, ProtocolKind, ProviderKind,
     ProviderListItem, ProviderScanView, SchemaInfoView,
