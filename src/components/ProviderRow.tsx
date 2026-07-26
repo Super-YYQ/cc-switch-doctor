@@ -1,4 +1,5 @@
 import { Lock } from "lucide-react";
+import type { KeyboardEvent } from "react";
 import type { ProviderListItem } from "@/types";
 import { hostFromUrl, statusBadge } from "@/lib/utils";
 
@@ -8,6 +9,8 @@ interface Props {
   active: boolean;
   running: boolean;
   resultStatus?: string;
+  /** True only when a diagnosis summary exists for this provider (not selection state). */
+  hasResult: boolean;
   disabled: boolean;
   onToggle: () => void;
   onActivate: () => void;
@@ -19,6 +22,7 @@ export function ProviderRow({
   active,
   running,
   resultStatus,
+  hasResult,
   disabled,
   onToggle,
   onActivate,
@@ -30,6 +34,19 @@ export function ProviderRow({
       ? { label: "可诊断", kind: "ok" as const, zh: "可诊断" }
       : { label: "已跳过", kind: "skip" as const, zh: "官方登录，已跳过" };
 
+  function activateIfPossible() {
+    if (!hasResult) return;
+    onActivate();
+  }
+
+  function onBodyKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (!hasResult) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onActivate();
+    }
+  }
+
   return (
     <article
       id={`provider-${p.opaqueId}`}
@@ -39,21 +56,27 @@ export function ProviderRow({
         active ? "active" : "",
         !p.selectable ? "disabled" : "",
         running ? "running" : "",
+        hasResult ? "navigable" : "",
       ]
         .filter(Boolean)
         .join(" ")}
-      onClick={onActivate}
     >
       <div className="provider-card-inner">
         <input
           type="checkbox"
           checked={checked}
           disabled={!p.selectable || disabled}
-          onClick={(e) => e.stopPropagation()}
           onChange={onToggle}
           aria-label={`选择 ${p.displayName}`}
         />
-        <div className="provider-card-body">
+        <div
+          className={["provider-card-body", hasResult ? "navigable" : ""].filter(Boolean).join(" ")}
+          role={hasResult ? "button" : undefined}
+          tabIndex={hasResult ? 0 : undefined}
+          aria-label={hasResult ? `查看 ${p.displayName} 的诊断结果` : undefined}
+          onClick={activateIfPossible}
+          onKeyDown={onBodyKeyDown}
+        >
           <div className="provider-card-title-row">
             <div className="provider-card-name">
               <strong className="ellipsis">{p.displayName}</strong>
@@ -67,6 +90,7 @@ export function ProviderRow({
           <div className="muted mono ellipsis provider-meta">
             {p.appLabel}
             {p.maskedKey ? ` · ${p.maskedKey}` : ""}
+            {` · ${p.protocolLabel || "未知协议"}`}
           </div>
           <div className="provider-host-model">
             <div className="mono muted ellipsis" title={p.safeBaseUrl}>
@@ -76,21 +100,11 @@ export function ProviderRow({
               {p.configuredModel || "—"}
             </div>
           </div>
-          <div className="provider-footer">
-            <span className="badge">{p.protocolLabel || "未知协议"}</span>
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                onActivate();
-              }}
-              aria-label={`查看详情 ${p.displayName}`}
-            >
-              查看详情
-            </button>
-          </div>
-          {p.skipReason && <div className="muted provider-skip">{p.skipReason}</div>}
+          {p.skipReason && (
+            <div className="muted provider-skip truncate-2" title={p.skipReason}>
+              {p.skipReason}
+            </div>
+          )}
         </div>
       </div>
     </article>

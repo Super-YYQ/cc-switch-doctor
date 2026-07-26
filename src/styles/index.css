@@ -255,10 +255,10 @@ button:disabled {
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
   padding: var(--provider-card-pad-y) var(--provider-card-pad-x);
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   transition: 0.12s ease;
-  cursor: pointer;
-  min-height: 96px;
+  cursor: default;
+  min-height: 78px;
 }
 .provider-card:hover {
   background: var(--bg-hover);
@@ -278,6 +278,9 @@ button:disabled {
 .provider-card.running {
   border-color: color-mix(in srgb, var(--primary) 50%, var(--border));
 }
+.provider-card.navigable {
+  cursor: default;
+}
 
 .provider-card-inner {
   display: flex;
@@ -291,6 +294,14 @@ button:disabled {
 .provider-card-body {
   flex: 1;
   min-width: 0;
+  border-radius: 6px;
+}
+.provider-card-body.navigable {
+  cursor: pointer;
+}
+.provider-card-body.navigable:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
 }
 .provider-card-title-row {
   display: flex;
@@ -315,19 +326,12 @@ button:disabled {
   display: grid;
   grid-template-columns: 1.2fr 1fr;
   gap: 6px;
-  margin-top: 4px;
+  margin-top: 3px;
   font-size: var(--font-secondary);
-}
-.provider-footer {
-  margin-top: 4px;
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
 }
 .provider-skip {
   font-size: 11px;
-  margin-top: 4px;
+  margin-top: 3px;
 }
 
 .result-card {
@@ -368,11 +372,10 @@ button:disabled {
   margin-top: 2px;
   font-size: 11px;
 }
-.result-conclusion {
-  margin: 6px 0 4px;
+.result-channel-summary {
+  margin: 6px 0 6px;
+  font-size: 12px;
   line-height: 1.4;
-  color: var(--text-secondary);
-  font-size: var(--font-body);
 }
 .result-tag {
   margin-bottom: 6px;
@@ -401,9 +404,9 @@ button:disabled {
 .result-suggestion {
   background: var(--bg-soft);
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 6px 8px;
   border: 1px solid var(--border);
-  margin-bottom: 6px;
+  margin-bottom: 5px;
 }
 .result-suggestion p {
   margin: 0;
