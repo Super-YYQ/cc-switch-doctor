@@ -267,6 +267,96 @@ export function confidenceLabel(c: string): string {
   return c;
 }
 
+/** True when a click target is itself an interactive control that should not trigger pane navigation. */
+export function isInteractiveTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    !!target.closest("button, a, input, select, textarea, summary, details, [role='button']")
+  );
+}
+
+const SIMPLE_ROUTE_DISPOSITIONS = new Set([
+  "not_requested",
+  "not_configured",
+  "not_running",
+  "not_current_target",
+  "unsupported_app",
+  "blocked_non_loopback",
+]);
+
+/** Whether the route channel needs the expanded detail panel (real attempt / complex evidence). */
+export function shouldShowRouteDetail(summary: {
+  route?: {
+    disposition?: string | null;
+    attempted?: boolean | null;
+    generate?: unknown;
+    streaming?: unknown;
+    actualProviderName?: string | null;
+    actualProviderId?: string | null;
+    failoverCountBefore?: number | null;
+    failoverCountAfter?: number | null;
+    notice?: string | null;
+  } | null;
+  routeStatus?: string | null;
+  routeSideEffectNotice?: string | null;
+  attempts?: { channel?: string | null; httpSent?: boolean }[];
+}): boolean {
+  const routeAttempts = (summary.attempts ?? []).filter((a) => a.channel === "ccs_local_route");
+  if (summary.route?.attempted === true || routeAttempts.some((a) => a.httpSent)) return true;
+  if (summary.route?.actualProviderName || summary.route?.actualProviderId) return true;
+  if (summary.route?.failoverCountBefore != null || summary.route?.failoverCountAfter != null) {
+    return true;
+  }
+  if (summary.route?.notice || summary.routeSideEffectNotice) return true;
+  if (summary.route?.generate || summary.route?.streaming) return true;
+  if ((summary.route?.disposition || "").toLowerCase() === "attempted") return true;
+  if (summary.routeStatus === "CCS_ROUTE_TARGET_MISMATCH") return true;
+  return false;
+}
+
+export function directChannelLabel(summary: {
+  direct?: { status?: string | null; success?: boolean } | null;
+  directStatus?: string | null;
+  attempts?: { channel?: string | null; ok?: boolean }[];
+}): string {
+  const directStatusCode = summary.direct?.status || summary.directStatus || null;
+  if (directStatusCode) return statusBadge(directStatusCode).zh;
+  const directAttempts = (summary.attempts ?? []).filter(
+    (a) => !a.channel || a.channel === "direct_upstream",
+  );
+  if (directAttempts.some((a) => a.ok) || summary.direct?.success) return "直连成功";
+  if (directAttempts.length) return "直连未成功";
+  return "未执行直连";
+}
+
+/** Compact one-line route status for simple (non-attempted) dispositions. */
+export function routeChannelSummaryText(
+  disposition?: string | null,
+  routeStatus?: string | null,
+): string {
+  const d = (disposition || "").toLowerCase();
+  if (d === "not_running" || routeStatus === "CCS_ROUTE_NOT_RUNNING") {
+    return "未验证（CCS 未运行）";
+  }
+  if (d === "not_configured" || routeStatus === "CCS_ROUTE_NOT_APPLICABLE") {
+    return "未验证（未配置或不适用）";
+  }
+  if (d === "not_current_target") return "未验证（非当前目标）";
+  if (d === "blocked_non_loopback") return "未验证（非 loopback）";
+  if (d === "unsupported_app") return "未验证（应用不支持）";
+  if (d === "not_requested") return "未请求";
+  if (SIMPLE_ROUTE_DISPOSITIONS.has(d)) {
+    const label = routeDispositionLabel(disposition, routeStatus);
+    return label.detail && label.detail !== label.title
+      ? `${label.title}（${label.detail}）`
+      : label.title;
+  }
+  const label = routeDispositionLabel(disposition, routeStatus);
+  return label.detail && label.detail !== label.title
+    ? `${label.title}（${label.detail}）`
+    : label.title;
+}
+
 /** Primary badge code: prefer primaryOutcome; never invent route disposition as primary. */
 export function primaryStatusCode(summary: {
   status: string;

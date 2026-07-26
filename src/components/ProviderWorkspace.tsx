@@ -267,6 +267,7 @@ export function ProviderWorkspace({
             active={activeId === p.opaqueId}
             running={runningIds.has(p.opaqueId)}
             resultStatus={statusById.get(p.opaqueId)}
+            hasResult={statusById.has(p.opaqueId)}
             disabled={running}
             onToggle={() => onToggle(p)}
             onActivate={() => onActivate(p.opaqueId)}

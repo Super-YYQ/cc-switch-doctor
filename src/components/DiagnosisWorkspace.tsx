@@ -2,7 +2,7 @@ import { Stethoscope } from "lucide-react";
 import type { ProviderDiagnosisSummary, ProviderListItem } from "@/types";
 import { ResultCard } from "./ResultCard";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { statusBadge, primaryStatusCode } from "@/lib/utils";
+import { isInteractiveTarget, statusBadge, primaryStatusCode } from "@/lib/utils";
 
 interface Props {
   summaries: ProviderDiagnosisSummary[];
@@ -24,6 +24,16 @@ function priority(s: ProviderDiagnosisSummary): number {
   return 3;
 }
 
+function matchesFilter(s: ProviderDiagnosisSummary, filter: Filter): boolean {
+  const k = statusBadge(primaryStatusCode(s)).kind;
+  if (filter === "all") return true;
+  if (filter === "ok") return k === "ok";
+  if (filter === "skip") return k === "skip";
+  if (filter === "needs") return k === "info" || !!s.needsLocalRouting;
+  if (filter === "fail") return k === "danger" || (k === "warn" && !s.anySuccess);
+  return true;
+}
+
 export function DiagnosisWorkspace({
   summaries,
   activeId,
@@ -37,6 +47,7 @@ export function DiagnosisWorkspace({
   const [showLog, setShowLog] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const userNavRef = useRef(false);
+  const prevActiveIdRef = useRef<string | null>(null);
 
   // Keep left-provider order when possible
   const ordered = useMemo(() => {
@@ -59,15 +70,20 @@ export function DiagnosisWorkspace({
     return [...ordered].sort((a, b) => priority(a) - priority(b));
   }, [ordered, filter]);
 
-  const filtered = sorted.filter((s) => {
-    const k = statusBadge(primaryStatusCode(s)).kind;
-    if (filter === "all") return true;
-    if (filter === "ok") return k === "ok";
-    if (filter === "skip") return k === "skip";
-    if (filter === "needs") return k === "info" || !!s.needsLocalRouting;
-    if (filter === "fail") return k === "danger" || (k === "warn" && !s.anySuccess);
-    return true;
-  });
+  // When left/right navigation activates a result hidden by the current filter, reveal it.
+  // Only react to activeId transitions so manual filter chips still work.
+  useEffect(() => {
+    if (activeId === prevActiveIdRef.current) return;
+    prevActiveIdRef.current = activeId;
+    if (!activeId) return;
+    const target = summaries.find((s) => s.opaqueId === activeId);
+    if (!target) return;
+    if (!matchesFilter(target, filter)) {
+      setFilter("all");
+    }
+  }, [activeId, summaries, filter]);
+
+  const filtered = sorted.filter((s) => matchesFilter(s, filter));
 
   const stats = useMemo(() => {
     let ok = 0;
@@ -224,7 +240,10 @@ export function DiagnosisWorkspace({
           <div
             key={s.opaqueId}
             id={`result-${s.opaqueId}`}
-            onClick={() => jumpTo(s.opaqueId)}
+            onClick={(event) => {
+              if (isInteractiveTarget(event.target)) return;
+              jumpTo(s.opaqueId);
+            }}
             style={{
               outline: activeId === s.opaqueId ? "2px solid var(--primary)" : undefined,
               borderRadius: 12,

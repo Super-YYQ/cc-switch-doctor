@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   assertNoFullKeyInDom,
+  directChannelLabel,
   estimateClientSide,
   filterProviders,
   groupAttemptsByCanonical,
   hostFromUrl,
+  isInteractiveTarget,
   primaryStatusCode,
+  routeChannelSummaryText,
   routeDispositionLabel,
+  shouldShowRouteDetail,
   statusBadge,
 } from "@/lib/utils";
 import type { ProviderListItem } from "@/types";
@@ -169,5 +173,58 @@ describe("estimate, host and key safety", () => {
 
   it("extracts host", () => {
     expect(hostFromUrl("https://api.example.com/v1/chat")).toBe("api.example.com");
+  });
+});
+
+describe("v0.1.10 channel summary helpers", () => {
+  it("keeps simple route dispositions compact", () => {
+    expect(
+      shouldShowRouteDetail({
+        route: { disposition: "not_running", attempted: false },
+        routeStatus: "CCS_ROUTE_NOT_RUNNING",
+      }),
+    ).toBe(false);
+    expect(routeChannelSummaryText("not_running", "CCS_ROUTE_NOT_RUNNING")).toBe(
+      "未验证（CCS 未运行）",
+    );
+    expect(routeChannelSummaryText("not_requested")).toBe("未请求");
+  });
+
+  it("expands route detail for real attempts and complex evidence", () => {
+    expect(
+      shouldShowRouteDetail({
+        route: { disposition: "attempted", attempted: true },
+        attempts: [{ channel: "ccs_local_route", httpSent: true }],
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowRouteDetail({
+        route: {
+          disposition: "not_current_target",
+          attempted: false,
+          actualProviderName: "Other",
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("labels direct channel from layered status", () => {
+    expect(
+      directChannelLabel({
+        direct: { status: "RATE_LIMITED", success: false },
+        directStatus: "RATE_LIMITED",
+      }),
+    ).toBe("请求被限流");
+  });
+
+  it("detects interactive targets used by result navigation", () => {
+    const root = document.createElement("div");
+    root.innerHTML =
+      '<button id="b">x</button><div id="plain">y</div><details open><summary id="s">z</summary></details>';
+    document.body.appendChild(root);
+    expect(isInteractiveTarget(root.querySelector("#b"))).toBe(true);
+    expect(isInteractiveTarget(root.querySelector("#s"))).toBe(true);
+    expect(isInteractiveTarget(root.querySelector("#plain"))).toBe(false);
+    root.remove();
   });
 });

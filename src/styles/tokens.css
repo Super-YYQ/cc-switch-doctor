@@ -64,8 +64,8 @@
   --font-title: 14px;
   --btn-h: 32px;
   --chip-h: 28px;
-  --provider-card-pad-y: 8px;
-  --provider-card-pad-x: 10px;
+  --provider-card-pad-y: 7px;
+  --provider-card-pad-x: 9px;
 }
 
 @media (prefers-color-scheme: dark) {

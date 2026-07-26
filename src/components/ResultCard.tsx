@@ -2,11 +2,14 @@ import { Copy, CheckCircle2 } from "lucide-react";
 import type { ErrorEvidence, ProviderDiagnosisSummary } from "@/types";
 import {
   confidenceLabel,
+  directChannelLabel,
   groupAttemptsByCanonical,
   hostFromUrl,
   possibleCauses,
   primaryStatusCode,
+  routeChannelSummaryText,
   routeDispositionLabel,
+  shouldShowRouteDetail,
   statusBadge,
 } from "@/lib/utils";
 import { useState } from "react";
@@ -45,14 +48,16 @@ export function ResultCard({ summary: s, onCopy }: Props) {
   const [openEvidence, setOpenEvidence] = useState(false);
   const [openDebug, setOpenDebug] = useState(false);
 
+  const realSendCount = s.attempts.filter((a) => a.httpSent).length;
   const evidenceTag =
     s.currentConfigOk || s.anySuccess
       ? s.needsLocalRouting
         ? "上游 API 已验证 · 端到端需本地路由（推断）"
         : "上游 API 已验证"
-      : "未发现可用组合";
+      : realSendCount > 0
+        ? `真实请求 ${realSendCount} · 未发现成功组合`
+        : "未发现可用组合";
 
-  const conclusion = b.zh;
   const evidenceLines = collectEvidenceLines(s);
   const keyEvidence = s.evidence.slice(0, 2);
   const protocolVariantNote = s.attempts.find(
@@ -68,14 +73,42 @@ export function ResultCard({ summary: s, onCopy }: Props) {
   const directStatusCode = s.direct?.status || s.directStatus || null;
   const routeDisp = routeDispositionLabel(s.route?.disposition, s.routeStatus);
   const routeAttempted = s.route?.attempted === true || routeAttempts.some((a) => a.httpSent);
-
-  const realSendCount = s.attempts.filter((a) => a.httpSent).length;
+  const showRouteDetail = shouldShowRouteDetail(s);
+  const directLabel = directChannelLabel(s);
+  const routeSummary = routeChannelSummaryText(s.route?.disposition, s.routeStatus);
   const grouped = groupAttemptsByCanonical(s.attempts);
+
+  const confidenceKind =
+    s.confidence === "low" ? "danger" : s.confidence === "medium" ? "warn" : "skip";
+
+  const modelLine = (() => {
+    if (!s.configuredModel && !s.outboundModel && !s.modelTransform && !s.successModel) {
+      return null;
+    }
+    const configured = s.configuredModel;
+    const outbound = s.outboundModel || s.successModel;
+    if (configured && outbound && configured !== outbound) {
+      const rule = s.modelTransform ? `（${s.modelTransform}）` : "";
+      return `模型：${configured} → ${outbound}${rule}`;
+    }
+    if (configured && s.modelTransform) {
+      return `模型：${configured}（${s.modelTransform}）`;
+    }
+    if (configured) return `模型：${configured}`;
+    if (outbound) return `模型：${outbound}`;
+    return s.modelTransform ? `模型规则：${s.modelTransform}` : null;
+  })();
+
+  const successCombo = (() => {
+    if (!s.successProtocol && !s.successUrl && !s.successModel) return null;
+    const parts = [s.successProtocol, s.successModel, s.successUrl].filter(Boolean);
+    return parts.length ? parts.join(" · ") : null;
+  })();
 
   return (
     <article className={`result-card ${b.kind}`}>
       <div className="result-card-head">
-        <div style={{ minWidth: 0 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
             <strong className="result-title">
               {s.appLabel} / {s.displayName}
@@ -83,25 +116,27 @@ export function ResultCard({ summary: s, onCopy }: Props) {
             <span className={`badge ${b.kind}`} title={primaryCode}>
               {b.zh}
             </span>
-            {hasRouteMeta && !routeAttempted && (
-              <span className="badge skip" title={routeDisp.detail}>
-                路由未验证
-              </span>
-            )}
+            <span
+              className={`badge ${confidenceKind}`}
+              title="可信度反映主结论的证据强度，不改变 Primary 语义"
+            >
+              可信度：{confidenceLabel(s.confidence)}
+            </span>
           </div>
           <div className="mono muted ellipsis result-host" title={s.safeBaseUrl}>
             {s.safeBaseUrl && s.safeBaseUrl !== "—" ? hostFromUrl(s.safeBaseUrl) : "—"}
           </div>
         </div>
-        <span className="badge">可信度 {confidenceLabel(s.confidence)}</span>
       </div>
 
-      <div className="section-title" style={{ marginTop: 4 }}>
-        诊断结论
-      </div>
-      <p className="result-conclusion">{conclusion}</p>
+      {showChannels && !showRouteDetail && (
+        <div className="result-channel-summary muted">
+          直连：{directLabel}
+          {hasRouteMeta ? ` · 路由：${routeSummary}` : ""}
+        </div>
+      )}
 
-      {showChannels && (
+      {showChannels && showRouteDetail && (
         <div style={{ display: "grid", gap: 6, marginBottom: 8 }}>
           <div
             style={{
@@ -112,88 +147,75 @@ export function ResultCard({ summary: s, onCopy }: Props) {
             }}
           >
             <div className="section-title">上游直连</div>
-            <div className="secondary">
-              {directStatusCode
-                ? statusBadge(directStatusCode).zh
-                : directAttempts.some((a) => a.ok)
-                  ? "直连成功"
-                  : directAttempts.length
-                    ? "直连未成功"
-                    : "未执行直连"}
-            </div>
+            <div className="secondary">{directLabel}</div>
           </div>
-          {(hasRouteMeta || s.routeSideEffectNotice) && (
-            <div
-              style={{
-                border: "1px solid var(--border)",
-                borderRadius: 8,
-                padding: "6px 8px",
-                background: "var(--bg-soft)",
-                fontSize: 12,
-              }}
-            >
-              <div className="section-title">CCS 路由</div>
-              <div className="secondary">
-                {routeAttempted ? (
-                  <>
-                    {s.route?.generate && (
-                      <div>
-                        基础推理：{s.route.generate.success ? "成功" : "失败"}
-                        {s.route.generate.status ? `（${s.route.generate.status}）` : ""}
-                      </div>
-                    )}
-                    {s.route?.streaming && (
-                      <div>
-                        流式输出：{s.route.streaming.success ? "成功" : "不支持或失败"}
-                        {s.route.streaming.status ? `（${s.route.streaming.status}）` : ""}
-                      </div>
-                    )}
-                    {!s.route?.generate && (
-                      <div>
-                        {s.routeStatus
-                          ? statusBadge(s.routeStatus).zh
-                          : routeAttempts.some((a) => a.ok)
-                            ? "路由请求成功"
-                            : "路由未成功"}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <>
+          <div
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              padding: "6px 8px",
+              background: "var(--bg-soft)",
+              fontSize: 12,
+            }}
+          >
+            <div className="section-title">CCS 路由</div>
+            <div className="secondary">
+              {routeAttempted ? (
+                <>
+                  {s.route?.generate && (
                     <div>
-                      <span className={`badge ${routeDisp.kind}`} style={{ marginRight: 6 }}>
-                        {routeDisp.title}
-                      </span>
-                      {routeDisp.detail}
+                      基础推理：{s.route.generate.success ? "成功" : "失败"}
+                      {s.route.generate.status ? `（${s.route.generate.status}）` : ""}
                     </div>
-                  </>
-                )}
-              </div>
-              {s.route?.actualProviderName && (
-                <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>
-                  实际处理 Provider：{s.route.actualProviderName}
-                  {s.route.actualProviderId ? `（${s.route.actualProviderId}）` : ""}
-                </div>
-              )}
-              {(s.route?.failoverCountBefore != null || s.route?.failoverCountAfter != null) && (
-                <div className="muted" style={{ marginTop: 2, fontSize: 11 }}>
-                  故障转移次数：{s.route.failoverCountBefore ?? "—"} →{" "}
-                  {s.route.failoverCountAfter ?? "—"}
-                </div>
-              )}
-              {(s.route?.notice || s.routeSideEffectNotice) && (
-                <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>
-                  {s.route?.notice || s.routeSideEffectNotice}
+                  )}
+                  {s.route?.streaming && (
+                    <div>
+                      流式输出：{s.route.streaming.success ? "成功" : "不支持或失败"}
+                      {s.route.streaming.status ? `（${s.route.streaming.status}）` : ""}
+                    </div>
+                  )}
+                  {!s.route?.generate && (
+                    <div>
+                      {s.routeStatus
+                        ? statusBadge(s.routeStatus).zh
+                        : routeAttempts.some((a) => a.ok)
+                          ? "路由请求成功"
+                          : "路由未成功"}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div>
+                  <span className={`badge ${routeDisp.kind}`} style={{ marginRight: 6 }}>
+                    {routeDisp.title}
+                  </span>
+                  {routeDisp.detail}
                 </div>
               )}
             </div>
-          )}
+            {s.route?.actualProviderName && (
+              <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>
+                实际处理 Provider：{s.route.actualProviderName}
+                {s.route.actualProviderId ? `（${s.route.actualProviderId}）` : ""}
+              </div>
+            )}
+            {(s.route?.failoverCountBefore != null || s.route?.failoverCountAfter != null) && (
+              <div className="muted" style={{ marginTop: 2, fontSize: 11 }}>
+                故障转移次数：{s.route.failoverCountBefore ?? "—"} →{" "}
+                {s.route.failoverCountAfter ?? "—"}
+              </div>
+            )}
+            {(s.route?.notice || s.routeSideEffectNotice) && (
+              <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>
+                {s.route?.notice || s.routeSideEffectNotice}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
       <div className="badge info result-tag">
         <CheckCircle2 size={11} /> {evidenceTag}
-        {realSendCount > 0 ? ` · 真实请求 ${realSendCount}` : ""}
       </div>
 
       {protocolVariantNote && <div className="result-variant muted">{protocolVariantNote}</div>}
@@ -224,27 +246,13 @@ export function ResultCard({ summary: s, onCopy }: Props) {
         <p>{s.suggestion}</p>
       </div>
 
-      {(s.configuredModel || s.outboundModel || s.modelTransform) && (
-        <div className="result-success-combo secondary">
-          <div className="section-title">模型语义</div>
-          {s.configuredModel && <div>配置值：{s.configuredModel}</div>}
-          {(s.outboundModel || s.successModel) && (
-            <div>上游值：{s.outboundModel || s.successModel}</div>
-          )}
-          {s.modelTransform && <div>规则：{s.modelTransform}</div>}
-        </div>
-      )}
+      {modelLine && <div className="result-success-combo secondary">{modelLine}</div>}
 
-      {(s.successProtocol || s.successUrl) && (
+      {successCombo && (
         <div className="result-success-combo secondary">
-          <div className="section-title">成功组合</div>
-          {s.successProtocol && <div>协议：{s.successProtocol}</div>}
-          {s.successModel && <div>模型：{s.successModel}</div>}
-          {s.successUrl && (
-            <div className="mono ellipsis" title={s.successUrl}>
-              URL：{s.successUrl}
-            </div>
-          )}
+          <span className="ellipsis" title={s.successUrl ?? successCombo}>
+            成功组合：{successCombo}
+          </span>
         </div>
       )}
 
