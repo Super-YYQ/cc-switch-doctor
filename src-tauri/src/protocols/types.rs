@@ -406,6 +406,9 @@ mod redact_tests {
             "response_excerpt leaked key"
         );
         let ev_msg = out.error_evidence[0].message.as_deref().unwrap_or("");
-        assert!(!ev_msg.contains(key), "error_evidence message leaked key: {ev_msg}");
+        assert!(
+            !ev_msg.contains(key),
+            "error_evidence message leaked key: {ev_msg}"
+        );
     }
 }

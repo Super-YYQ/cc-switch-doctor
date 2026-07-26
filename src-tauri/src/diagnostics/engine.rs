@@ -45,7 +45,11 @@ pub struct StartDiagnosisRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 // Variant tags stay snake_case (`run_started`); field names must be camelCase for the TS UI.
-#[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 #[allow(clippy::large_enum_variant)]
 pub enum DiagnosisEvent {
     RunStarted {
