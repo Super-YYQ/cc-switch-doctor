@@ -1,6 +1,6 @@
 [package]
 name = "cc-switch-doctor"
-version = "0.1.9"
+version = "0.1.10"
 description = "Read-only, stateless, pure-HTTP diagnostic tool for CC Switch third-party providers"
 authors = ["Super-YYQ"]
 edition = "2021"

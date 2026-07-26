@@ -1,3 +1,31 @@
+## [0.1.10] — 2026-07-26
+
+### Fixed
+
+- Removed the redundant Provider “查看详情” action that duplicated card activation
+- Provider content navigation is enabled only when a diagnosis result exists
+- ResultCard no longer repeats the Primary conclusion under a separate “诊断结论” block
+- Simple Direct / Route states collapse into a single channel summary line
+- Copy buttons, accordion summaries, and selects no longer trigger cross-pane provider jumps
+- Clicking a Provider whose result is hidden by the right-side filter reveals and focuses it
+
+### Changed
+
+- Compacted Provider rows to a three-line metadata layout (name/status, app·key·protocol, host/model)
+- Reduced Provider card min-height / padding for higher list density without shrinking global fonts
+- Confidence badge sits with Primary status in the ResultCard header meta row
+- Model semantics and success combinations use single-line compact copy when unambiguous
+
+### Added
+
+- UI density and interaction regression tests for Provider navigation, ResultCard de-duplication, and event filtering
+- Spec: `docs/project/CC-Switch-Doctor-v0.1.10-Compact-Provider-and-Result-UI-Regression-Safe-Spec.md`
+
+### Security
+
+- No Rust/backend changes; SQLite remains read-only; full keys still never enter the DOM
+- Frontend-only UI density and interaction fixes
+
 ## [0.1.9] — 2026-07-25
 
 ### Fixed
