@@ -1,5 +1,6 @@
 use super::types::{
-    apply_auth, AuthScheme, BuiltRequest, RequestPurpose, TokenLimitField, MAX_TOKENS, PROMPT_EN,
+    apply_auth, AuthScheme, BuiltRequest, RequestPurpose, TokenLimitField, BASIC_GENERATE_PROMPT,
+    MAX_TOKENS,
 };
 use crate::ccs_adapter::ProtocolKind;
 use crate::security::url_variants::join_url;
@@ -25,7 +26,7 @@ pub fn build_chat_request(
     let token_cap = if tool_call { 64 } else { MAX_TOKENS };
     let mut body = json!({
         "model": model,
-        "messages": [{"role":"user","content": PROMPT_EN}],
+        "messages": [{"role":"user","content": BASIC_GENERATE_PROMPT}],
         "stream": stream
     });
     match token_limit_field {

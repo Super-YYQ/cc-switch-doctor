@@ -1,4 +1,6 @@
-use super::types::{apply_auth, AuthScheme, BuiltRequest, RequestPurpose, MAX_TOKENS, PROMPT_EN};
+use super::types::{
+    apply_auth, AuthScheme, BuiltRequest, RequestPurpose, BASIC_GENERATE_PROMPT, MAX_TOKENS,
+};
 use crate::ccs_adapter::ProtocolKind;
 use crate::security::url_variants::join_url;
 use serde_json::json;
@@ -42,7 +44,7 @@ pub fn build_gemini_request_with_auth(
     let mut body = json!({
         "contents": [{
             "role": "user",
-            "parts": [{"text": PROMPT_EN}]
+            "parts": [{"text": BASIC_GENERATE_PROMPT}]
         }],
         "generationConfig": {
             "maxOutputTokens": MAX_TOKENS
