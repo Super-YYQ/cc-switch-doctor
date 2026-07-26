@@ -13,15 +13,8 @@
     "baselineCommit": "878c26f31e012ba32b9772bd080bd4fa9e7d495e",
     "baselineTag": "v3.18.0",
     "schemaVersion": 16,
-    "verifiedReleases": [
-      "3.17.0",
-      "3.18.0"
-    ],
-    "compatibleReleasePrefixes": [
-      "3.17.",
-      "3.18.",
-      "3.19."
-    ],
+    "verifiedReleases": ["3.17.0", "3.18.0"],
+    "compatibleReleasePrefixes": ["3.17.", "3.18.", "3.19."],
     "defaultDataDir": "~/.cc-switch/",
     "databaseFile": "cc-switch.db",
     "schemaFingerprints": [
@@ -34,11 +27,7 @@
         "providerShapeId": "provider-core-v1",
         "endpointShapeId": "endpoint-core-v1",
         "routingProfileId": "ccs-routing-v318",
-        "requiredTables": [
-          "providers",
-          "provider_endpoints",
-          "settings"
-        ],
+        "requiredTables": ["providers", "provider_endpoints", "settings"],
         "providersColumns": [
           "id",
           "app_type",
@@ -55,13 +44,7 @@
           "is_current",
           "in_failover_queue"
         ],
-        "providerEndpointsColumns": [
-          "id",
-          "provider_id",
-          "app_type",
-          "url",
-          "added_at"
-        ],
+        "providerEndpointsColumns": ["id", "provider_id", "app_type", "url", "added_at"],
         "notes": "v15→v16 migration rebuilds Codex session usage only; Provider core shape unchanged."
       },
       {
@@ -72,11 +55,7 @@
         "providerShapeId": "provider-core-v1",
         "endpointShapeId": "endpoint-core-v1",
         "routingProfileId": "ccs-routing-v317",
-        "requiredTables": [
-          "providers",
-          "provider_endpoints",
-          "settings"
-        ],
+        "requiredTables": ["providers", "provider_endpoints", "settings"],
         "providersColumns": [
           "id",
           "app_type",
@@ -93,13 +72,7 @@
           "is_current",
           "in_failover_queue"
         ],
-        "providerEndpointsColumns": [
-          "id",
-          "provider_id",
-          "app_type",
-          "url",
-          "added_at"
-        ]
+        "providerEndpointsColumns": ["id", "provider_id", "app_type", "url", "added_at"]
       },
       {
         "id": "ccs-schema-v13-providers-core",
@@ -107,10 +80,7 @@
         "userVersion": 13,
         "providerShapeId": "provider-core-v1",
         "endpointShapeId": "endpoint-core-v1",
-        "requiredTables": [
-          "providers",
-          "provider_endpoints"
-        ],
+        "requiredTables": ["providers", "provider_endpoints"],
         "providersColumns": [
           "id",
           "app_type",
@@ -127,25 +97,12 @@
           "is_current",
           "in_failover_queue"
         ],
-        "providerEndpointsColumns": [
-          "id",
-          "provider_id",
-          "app_type",
-          "url",
-          "added_at"
-        ]
+        "providerEndpointsColumns": ["id", "provider_id", "app_type", "url", "added_at"]
       }
     ],
     "capabilityShapes": {
       "provider-core-v1": {
-        "requiredColumns": [
-          "id",
-          "app_type",
-          "name",
-          "settings_config",
-          "meta",
-          "is_current"
-        ],
+        "requiredColumns": ["id", "app_type", "name", "settings_config", "meta", "is_current"],
         "optionalColumns": [
           "website_url",
           "category",
@@ -158,15 +115,8 @@
         ]
       },
       "endpoint-core-v1": {
-        "requiredColumns": [
-          "provider_id",
-          "app_type",
-          "url"
-        ],
-        "optionalColumns": [
-          "id",
-          "added_at"
-        ]
+        "requiredColumns": ["provider_id", "app_type", "url"],
+        "optionalColumns": ["id", "added_at"]
       }
     }
   },
@@ -180,12 +130,7 @@
     "hermes",
     "grokbuild"
   ],
-  "supportedProtocols": [
-    "openai_chat",
-    "openai_responses",
-    "anthropic_messages",
-    "gemini_native"
-  ],
+  "supportedProtocols": ["openai_chat", "openai_responses", "anthropic_messages", "gemini_native"],
   "managedAuthSkip": [
     "codex_oauth",
     "github_copilot",
@@ -213,19 +158,10 @@
         "gemini": "gemini-3.5-flash"
       },
       "routes": {
-        "claude": [
-          "/v1/messages"
-        ],
-        "claude-desktop": [
-          "/v1/messages"
-        ],
-        "codex": [
-          "/v1/responses",
-          "/v1/chat/completions"
-        ],
-        "gemini": [
-          "/v1beta/models/{model}:generateContent"
-        ]
+        "claude": ["/v1/messages"],
+        "claude-desktop": ["/v1/messages"],
+        "codex": ["/v1/responses", "/v1/chat/completions"],
+        "gemini": ["/v1beta/models/{model}:generateContent"]
       },
       "sources": [
         "upstream commit 878c26f31e012ba32b9772bd080bd4fa9e7d495e (CC Switch 3.18.0)",
@@ -250,19 +186,10 @@
         "gemini": "gemini-3.5-flash"
       },
       "routes": {
-        "claude": [
-          "/v1/messages"
-        ],
-        "claude-desktop": [
-          "/v1/messages"
-        ],
-        "codex": [
-          "/v1/responses",
-          "/v1/chat/completions"
-        ],
-        "gemini": [
-          "/v1beta/models/{model}:generateContent"
-        ]
+        "claude": ["/v1/messages"],
+        "claude-desktop": ["/v1/messages"],
+        "codex": ["/v1/responses", "/v1/chat/completions"],
+        "gemini": ["/v1beta/models/{model}:generateContent"]
       },
       "sources": [
         "src-tauri/src/claude_desktop_config.rs@a35209a6e741",

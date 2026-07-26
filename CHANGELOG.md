@@ -1,6 +1,7 @@
 ## [0.1.11] — 2026-07-26
 
 ### Fixed
+
 - Quick validation is now a true low-impact path: at most one current-configuration generate request per Provider
 - Removed the product-specific `CCS_DOCTOR_OK` marker from normal Generate / Stream requests
 - Native protocol 2xx responses with non-empty valid text count as `GENERATE_OK`
@@ -8,16 +9,19 @@
 - Quick does not send CCS route business requests (status/disposition only)
 
 ### Changed
+
 - Default diagnosis mode is Quick (concurrency fixed at 1)
 - Smart / Deep UI copy discloses multi-request automated diagnostic impact
 - Safety Drawer states that automation may still be recognized and that Doctor never spoofs official clients
 
 ### Security
+
 - Kept transparent `CC-Switch-Doctor/<version>` User-Agent
 - No official-client spoofing, UA rotation, prompt randomization, jitter, or proxy/IP rotation
 - SQLite remains read-only; full keys still never enter the DOM
 
 ### Added
+
 - Regression tests for Quick request count, non-empty native text success, UI risk notices, and non-evasion boundaries
 - Spec: `docs/project/CC-Switch-Doctor-v0.1.11-Low-Impact-Compliant-Diagnosis-Spec.md`
 
