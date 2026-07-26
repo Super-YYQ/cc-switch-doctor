@@ -5,9 +5,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Duration;
 
-pub const PROMPT_ZH: &str = "只输出字符串 CCS_DOCTOR_OK，不要输出其他内容。";
-pub const PROMPT_EN: &str = "Reply with exactly CCS_DOCTOR_OK and nothing else.";
-pub const SUCCESS_MARKER: &str = "CCS_DOCTOR_OK";
+/// Fixed, product-neutral generate prompt. Not randomized; not provider-specific.
+pub const BASIC_GENERATE_PROMPT: &str = "Reply briefly.";
 pub const MAX_TOKENS: u32 = 16;
 pub const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_ERROR_BYTES: usize = 64 * 1024;
@@ -292,16 +291,20 @@ pub fn is_max_completion_tokens_unsupported(result: &AttemptResult) -> bool {
         || (body.contains("unknown") && body.contains("parameter"))
 }
 
+/// True when native / cross-protocol extractors recovered consumable model text.
+pub fn evaluate_native_text(text: &str) -> bool {
+    !text.trim().is_empty()
+}
+
+/// Generate / stream success for non-empty recovered text.
+/// Returns `(ok, partial)` where partial is reserved for loose-field paths only
+/// (callers must not map native non-empty text to partial).
 pub fn evaluate_text(text: &str) -> (bool, bool) {
-    let t = text.trim();
-    if t.is_empty() {
-        return (false, false);
+    if evaluate_native_text(text) {
+        (true, false)
+    } else {
+        (false, false)
     }
-    if t.contains(SUCCESS_MARKER) {
-        return (true, false);
-    }
-    // Partial: got non-empty model text without marker
-    (false, true)
 }
 
 pub fn apply_auth(headers: &mut HashMap<String, String>, scheme: AuthScheme, key: &str) {

@@ -61,15 +61,29 @@ export function SafetyDrawer({ open, onClose, hideThisSession, onHideThisSession
           <div className="section-title">诊断模式说明</div>
           <ul className="secondary" style={{ paddingLeft: 18, lineHeight: 1.6, fontSize: 13 }}>
             <li>
-              <strong>快速验证</strong>：只测当前配置，最快、Token 最低。
+              <strong>快速验证（默认，低扰动）</strong>
+              ：仅发送 1 次当前配置标准生成请求；不执行变体、Streaming 或 Tool Calling；并发固定 1。
             </li>
             <li>
-              <strong>智能诊断</strong>：失败后尝试同 Host 变体（约 ≤12 次/配置）。
+              <strong>智能诊断</strong>
+              ：失败后尝试同 Host 变体（约 ≤12 次/配置），可能被识别为自动诊断。
             </li>
             <li>
-              <strong>深度兼容</strong>：额外 Streaming/Tool/稳定性（约 ≤16 次/配置）。
+              <strong>深度兼容</strong>
+              ：额外 Streaming/Tool/稳定性（约 ≤16 次/配置），最容易被识别为能力测试。
             </li>
-            <li>并发 1–3；同一 Host 每次会话最多 30 次真实请求。</li>
+            <li>Smart/Deep 并发 1–3；同一 Host 每次会话最多 30 次真实请求。</li>
+          </ul>
+        </section>
+        <section style={{ marginTop: 16 }}>
+          <div className="section-title">自动化识别边界</div>
+          <ul className="secondary" style={{ paddingLeft: 18, lineHeight: 1.6, fontSize: 13 }}>
+            <li>Doctor 无法保证供应商不会识别自动化请求。</li>
+            <li>本工具不会伪装官方客户端或绕过供应商风控。</li>
+            <li>快速验证默认仅发送一次标准生成请求。</li>
+            <li>
+              默认 User-Agent 透明标识为 <code style={{ fontSize: 12 }}>CC-Switch-Doctor/…</code>。
+            </li>
           </ul>
         </section>
         <section style={{ marginTop: 16 }}>

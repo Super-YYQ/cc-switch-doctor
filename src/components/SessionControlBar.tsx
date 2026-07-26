@@ -1,6 +1,6 @@
 import { Activity, Loader2, Square, RotateCcw } from "lucide-react";
 import type { DiagnosisMode, RoutingStatusView, VerifyMode } from "@/types";
-import { modeDescription, modeTooltip } from "@/lib/utils";
+import { modeDescription, modeTooltip, multiRequestImpactNotice } from "@/lib/utils";
 
 interface Props {
   mode: DiagnosisMode;
@@ -120,16 +120,25 @@ export function SessionControlBar({
             className="segmented"
             role="radiogroup"
             aria-label="并发数"
-            title="同时诊断的 Provider 数量。默认 1 最稳妥；2–3 更快，但更容易触发中转站限流。无论并发多少，同一 Host 每次会话仍最多发送 30 次真实请求。"
+            title={
+              mode === "quick"
+                ? "低扰动验证固定串行执行，避免同一时间对多个 Provider 或 Host 发起探测。"
+                : "同时诊断的 Provider 数量。默认 1 最稳妥；2–3 更快，但更容易触发中转站限流。无论并发多少，同一 Host 每次会话仍最多发送 30 次真实请求。"
+            }
           >
             {([1, 2, 3] as const).map((n) => (
               <button
                 key={n}
                 type="button"
-                className={concurrency === n ? "active" : ""}
-                disabled={running}
+                className={(mode === "quick" ? 1 : concurrency) === n ? "active" : ""}
+                disabled={running || (mode === "quick" && n !== 1)}
                 onClick={() => onConcurrency(n)}
                 aria-label={`并发 ${n}`}
+                title={
+                  mode === "quick" && n !== 1
+                    ? "低扰动验证固定串行执行，避免同一时间对多个 Provider 或 Host 发起探测。"
+                    : undefined
+                }
               >
                 {n}
               </button>
@@ -172,7 +181,8 @@ export function SessionControlBar({
               <>
                 已选 <strong style={{ color: "var(--text)" }}>{selectedCount}</strong> · 预计最多{" "}
                 <strong style={{ color: "var(--text)" }}>{estimated}</strong> 请求 · 并发{" "}
-                {concurrency}
+                {mode === "quick" ? 1 : concurrency}
+                {mode === "quick" ? " · 低扰动 / 1 次当前配置请求" : ""}
               </>
             )}
           </div>
@@ -207,6 +217,22 @@ export function SessionControlBar({
       >
         {modeDescription(mode)}
       </div>
+
+      {mode === "quick" && verifyMode === "direct_and_route" && (
+        <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>
+          快速验证不会执行路由链业务请求；请切换智能诊断。
+        </div>
+      )}
+
+      {!running && selectedCount > 0 && multiRequestImpactNotice(mode) && (
+        <div
+          className="muted"
+          style={{ fontSize: 11.5, marginTop: 4 }}
+          data-testid="multi-request-notice"
+        >
+          {multiRequestImpactNotice(mode)}
+        </div>
+      )}
 
       {running && (
         <div style={{ marginTop: 6 }}>

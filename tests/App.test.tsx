@@ -43,16 +43,45 @@ describe("App UI product shell", () => {
     expect(screen.getByRole("button", { name: /开始诊断|重新诊断/ })).toBeInTheDocument();
   });
 
-  it("defaults to Claude filter and smart mode; core filters always present", async () => {
+  it("defaults to Quick mode with concurrency 1 and low-impact copy", async () => {
     const user = userEvent.setup();
     render(<App />);
     await dismissSafety(user);
-    expect(screen.getByRole("button", { name: "智能诊断" }).className).toMatch(/active/);
+    expect(screen.getByRole("button", { name: "快速验证" }).className).toMatch(/active/);
+    expect(screen.getByRole("button", { name: "智能诊断" }).className).not.toMatch(/active/);
     expect(screen.getByRole("tab", { name: "Claude" }).className).toMatch(/active/);
     expect(screen.getByRole("tab", { name: "全部" }).className).not.toMatch(/active/);
     expect(screen.getByRole("tab", { name: "Codex" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Gemini" })).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/sk-[a-zA-Z0-9]{16,}/);
+    expect(screen.getAllByText(/低扰动/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "并发 2" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "并发 3" })).toBeDisabled();
+  });
+
+  it("shows multi-request impact notice for smart/deep only", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await dismissSafety(user);
+    await screen.findByText("GLM Relay");
+    await user.click(screen.getByRole("checkbox", { name: "选择 GLM Relay" }));
+    expect(screen.queryByTestId("multi-request-notice")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "智能诊断" }));
+    expect(screen.getByTestId("multi-request-notice")).toHaveTextContent(
+      /可能发送多次自动化诊断请求/,
+    );
+    await user.click(screen.getByRole("button", { name: "深度兼容" }));
+    expect(screen.getByTestId("multi-request-notice")).toBeInTheDocument();
+    expect(screen.getByText(/Streaming、Tool Calling/)).toBeInTheDocument();
+  });
+
+  it("safety drawer documents non-evasion boundary", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    expect(await screen.findByText(/无法保证供应商不会识别自动化请求/)).toBeInTheDocument();
+    expect(screen.getByText(/不会伪装官方客户端或绕过供应商风控/)).toBeInTheDocument();
+    expect(screen.getByText(/仅发送一次标准生成请求/)).toBeInTheDocument();
+    await dismissSafety(user);
   });
 
   it("does not auto-check providers; start disabled until selection", async () => {
@@ -72,6 +101,7 @@ describe("App UI product shell", () => {
     render(<App />);
     await dismissSafety(user);
     expect(screen.getByRole("button", { name: "并发 1" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "智能诊断" }));
     await user.click(screen.getByRole("button", { name: "并发 3" }));
     expect(screen.getByRole("button", { name: "刷新配置" })).not.toBeDisabled();
   });

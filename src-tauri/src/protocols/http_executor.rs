@@ -619,7 +619,7 @@ impl HttpExecutor {
         match super::parse::extract_response_text(req.protocol, &parsed) {
             Some(parsed_text) => {
                 let t = parsed_text.text;
-                let (marker_ok, marker_partial) = evaluate_text(&t);
+                let has_text = evaluate_text(&t).0;
                 use crate::protocols::types::ResponseCompatibility;
                 let compat = if parsed_text.loose_field {
                     ResponseCompatibility::LooseField
@@ -629,27 +629,24 @@ impl HttpExecutor {
                     ResponseCompatibility::Native
                 };
                 // LooseField never counts as full success (ok=true).
+                // Native / CrossProtocol: non-empty text is success without product markers.
                 let (ok, partial, classification) = match compat {
                     ResponseCompatibility::Native => {
-                        if marker_ok {
+                        if has_text {
                             (true, false, "GENERATE_OK".into())
-                        } else if marker_partial {
-                            (false, true, "PARTIAL_TEXT".into())
                         } else {
                             (false, false, "UNKNOWN_ERROR".into())
                         }
                     }
                     ResponseCompatibility::CrossProtocol => {
-                        if marker_ok {
+                        if has_text {
                             (true, false, "RESPONSE_PROTOCOL_VARIANT_OK".into())
-                        } else if marker_partial {
-                            (false, true, "PARTIAL_TEXT".into())
                         } else {
                             (false, false, "UNKNOWN_ERROR".into())
                         }
                     }
                     ResponseCompatibility::LooseField => {
-                        if !t.trim().is_empty() {
+                        if has_text {
                             (false, true, "LOOSE_RESPONSE_TEXT_OK".into())
                         } else {
                             (false, false, "UNKNOWN_ERROR".into())
@@ -658,12 +655,14 @@ impl HttpExecutor {
                 };
                 let suggestion_note = if parsed_text.cross_protocol {
                     Some(format!(
-                        "目标协议：{}；实际返回结构：{}",
-                        super::parse::protocol_label(req.protocol),
-                        super::parse::protocol_label(parsed_text.matched_protocol)
+                        "返回了有效文本，但响应结构属于 {}，不是配置的 {}。",
+                        super::parse::protocol_label(parsed_text.matched_protocol),
+                        super::parse::protocol_label(req.protocol)
                     ))
                 } else if parsed_text.loose_field {
                     Some("从兼容字段提取到文本（宽松解析，不能证明当前配置协议兼容）".into())
+                } else if ok {
+                    Some("HTTP 2xx + 原生协议结构 + 非空生成文本".into())
                 } else {
                     None
                 };
@@ -688,11 +687,7 @@ impl HttpExecutor {
                     error_message: if ok {
                         None
                     } else if partial {
-                        if matches!(compat, ResponseCompatibility::LooseField) {
-                            Some("宽松字段解析到文本，但不能证明当前协议配置可用".into())
-                        } else {
-                            Some("返回了有效文本但未包含 CCS_DOCTOR_OK 标记".into())
-                        }
+                        Some("宽松字段解析到文本，但不能证明当前协议配置可用".into())
                     } else {
                         Some("响应结构成功但无文本".into())
                     },
@@ -1170,8 +1165,6 @@ impl HttpExecutor {
                         } else {
                             "STREAM_OK".into()
                         }
-                    } else if partial {
-                        "PARTIAL_TEXT".into()
                     } else {
                         "STREAMING_UNSUPPORTED".into()
                     };
@@ -1191,10 +1184,8 @@ impl HttpExecutor {
                         error_kind: None,
                         error_message: if ok {
                             None
-                        } else if partial {
-                            Some("流式/完整 JSON 返回有效文本但缺少 CCS_DOCTOR_OK".into())
                         } else {
-                            None
+                            Some("流式/完整 JSON 未解析到非空文本增量".into())
                         },
                         response_excerpt: None,
                         classification,
@@ -1257,8 +1248,6 @@ impl HttpExecutor {
             } else {
                 "STREAM_OK".into()
             }
-        } else if partial {
-            "PARTIAL_TEXT".into()
         } else {
             "STREAMING_UNSUPPORTED".into()
         };
@@ -1278,10 +1267,8 @@ impl HttpExecutor {
             error_kind: None,
             error_message: if ok {
                 None
-            } else if partial {
-                Some("流式返回有效文本但缺少 CCS_DOCTOR_OK".into())
             } else {
-                None
+                Some("流式未解析到非空文本增量".into())
             },
             response_excerpt: None,
             classification,
@@ -1414,7 +1401,7 @@ fn _status_code_use(s: StatusCode) -> u16 {
 mod parse_integration_tests {
     use crate::ccs_adapter::ProtocolKind;
     use crate::protocols::parse::extract_response_text;
-    use crate::protocols::types::{evaluate_text, SUCCESS_MARKER};
+    use crate::protocols::types::evaluate_text;
     use serde_json::json;
 
     #[test]
@@ -1423,7 +1410,7 @@ mod parse_integration_tests {
             "id": "f9bbb78d-17ae-94fb-8230-b4c6ad4c0f4f",
             "type": "message",
             "role": "assistant",
-            "content": [{"type": "text", "text": "CCS_DOCTOR_OK"}],
+            "content": [{"type": "text", "text": "Hello."}],
             "stop_reason": "end_turn",
             "model": "grok-4.5-build-free",
             "usage": {
@@ -1433,7 +1420,7 @@ mod parse_integration_tests {
             }
         });
         let parsed = extract_response_text(ProtocolKind::AnthropicMessages, &body).unwrap();
-        assert_eq!(parsed.text, SUCCESS_MARKER);
+        assert_eq!(parsed.text, "Hello.");
         let (ok, partial) = evaluate_text(&parsed.text);
         assert!(ok);
         assert!(!partial);
@@ -1449,9 +1436,16 @@ mod parse_integration_tests {
 
     #[test]
     fn cross_protocol_openai_on_anthropic_target() {
-        let body = json!({"choices":[{"message":{"content":"CCS_DOCTOR_OK"}}]});
+        let body = json!({"choices":[{"message":{"content":"Hello."}}]});
         let p = extract_response_text(ProtocolKind::AnthropicMessages, &body).unwrap();
         assert!(p.cross_protocol);
-        assert_eq!(p.text, "CCS_DOCTOR_OK");
+        assert_eq!(p.text, "Hello.");
+        assert!(evaluate_text(&p.text).0);
+    }
+
+    #[test]
+    fn empty_native_text_is_not_generate_ok() {
+        assert!(!evaluate_text("").0);
+        assert!(!evaluate_text("   ").0);
     }
 }

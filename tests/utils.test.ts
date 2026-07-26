@@ -7,6 +7,9 @@ import {
   groupAttemptsByCanonical,
   hostFromUrl,
   isInteractiveTarget,
+  modeDescription,
+  modeTooltip,
+  multiRequestImpactNotice,
   primaryStatusCode,
   routeChannelSummaryText,
   routeDispositionLabel,
@@ -161,11 +164,22 @@ describe("groupAttemptsByCanonical", () => {
   });
 });
 
-describe("estimate, host and key safety", () => {
-  it("estimates requests", () => {
+describe("v0.1.11 mode copy and estimates", () => {
+  it("estimates one real request per provider in quick", () => {
+    expect(estimateClientSide(2, "quick")).toBe(2);
     expect(estimateClientSide(2, "smart")).toBe(24);
   });
 
+  it("describes low-impact quick and multi-request smart/deep", () => {
+    expect(modeDescription("quick")).toMatch(/1 次|低扰动/);
+    expect(modeDescription("smart")).toMatch(/自动诊断|多次/);
+    expect(modeTooltip("deep")).toMatch(/Streaming|Tool Calling/);
+    expect(multiRequestImpactNotice("quick")).toBeNull();
+    expect(multiRequestImpactNotice("smart")).toMatch(/多次自动化诊断请求/);
+  });
+});
+
+describe("estimate, host and key safety", () => {
   it("detects full keys", () => {
     expect(assertNoFullKeyInDom("sk-abcdefghijklmnopqrstuvwxyz")).toBe(false);
     expect(assertNoFullKeyInDom("sk-tes…1234")).toBe(true);
