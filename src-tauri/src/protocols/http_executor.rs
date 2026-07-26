@@ -432,43 +432,8 @@ impl HttpExecutor {
         if !status.is_success() {
             let excerpt = truncate(&redactor.redact(&body_text), MAX_ERROR_BYTES);
             let (classification, ev) = classify_with_evidence(status_code, &body_text, ct_ref);
-            return AttemptResult {
-                ok: false,
-                partial: false,
-                status_code: Some(status_code),
-                latency_ms,
-                ttft_ms: None,
-                protocol: req.protocol,
-                model: req.model.clone(),
-                url: safe_url,
-                stream: false,
-                purpose: req.purpose,
-                extracted_text: None,
-                tool_call_ok: None,
-                error_kind: Some("http".into()),
-                error_message: Some(excerpt.clone()),
-                response_excerpt: Some(excerpt),
-                classification,
-                http_sent: true,
-                reused_from_cache: false,
-                suggestion_note: None,
-                token_limit_field: None,
-                error_evidence: ev,
-                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
-                response_compatibility: None,
-                requested_protocol: None,
-                matched_protocol: None,
-                configured_model_display: None,
-                outbound_model: None,
-                model_transform: None,
-            };
-        }
-
-        // HTML on 2xx → WAF before JSON parse
-        if let Some(ct) = ct_ref {
-            if ct.to_ascii_lowercase().contains("text/html") {
-                let (cls, ev) = classify_with_evidence(status_code, &body_text, ct_ref);
-                return AttemptResult {
+            return redact_result(
+                AttemptResult {
                     ok: false,
                     partial: false,
                     status_code: Some(status_code),
@@ -481,14 +446,10 @@ impl HttpExecutor {
                     purpose: req.purpose,
                     extracted_text: None,
                     tool_call_ok: None,
-                    error_kind: Some("waf".into()),
-                    error_message: Some("响应 Content-Type 为 HTML，疑似网关/WAF".into()),
-                    response_excerpt: Some(truncate(&redactor.redact(&body_text), 512)),
-                    classification: if cls == "UNKNOWN_ERROR" {
-                        "GATEWAY_OR_WAF".into()
-                    } else {
-                        cls
-                    },
+                    error_kind: Some("http".into()),
+                    error_message: Some(excerpt.clone()),
+                    response_excerpt: Some(excerpt),
+                    classification,
                     http_sent: true,
                     reused_from_cache: false,
                     suggestion_note: None,
@@ -501,7 +462,52 @@ impl HttpExecutor {
                     configured_model_display: None,
                     outbound_model: None,
                     model_transform: None,
-                };
+                },
+                redactor,
+            );
+        }
+
+        // HTML on 2xx → WAF before JSON parse
+        if let Some(ct) = ct_ref {
+            if ct.to_ascii_lowercase().contains("text/html") {
+                let (cls, ev) = classify_with_evidence(status_code, &body_text, ct_ref);
+                return redact_result(
+                    AttemptResult {
+                        ok: false,
+                        partial: false,
+                        status_code: Some(status_code),
+                        latency_ms,
+                        ttft_ms: None,
+                        protocol: req.protocol,
+                        model: req.model.clone(),
+                        url: safe_url,
+                        stream: false,
+                        purpose: req.purpose,
+                        extracted_text: None,
+                        tool_call_ok: None,
+                        error_kind: Some("waf".into()),
+                        error_message: Some("响应 Content-Type 为 HTML，疑似网关/WAF".into()),
+                        response_excerpt: Some(truncate(&body_text, 512)),
+                        classification: if cls == "UNKNOWN_ERROR" {
+                            "GATEWAY_OR_WAF".into()
+                        } else {
+                            cls
+                        },
+                        http_sent: true,
+                        reused_from_cache: false,
+                        suggestion_note: None,
+                        token_limit_field: None,
+                        error_evidence: ev,
+                        channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                        response_compatibility: None,
+                        requested_protocol: None,
+                        matched_protocol: None,
+                        configured_model_display: None,
+                        outbound_model: None,
+                        model_transform: None,
+                    },
+                    redactor,
+                );
             }
         }
 
@@ -524,37 +530,42 @@ impl HttpExecutor {
                     | "MODEL_NOT_FOUND"
                     | "UNKNOWN_ERROR"
             ) {
-                let excerpt = truncate(&redactor.redact(&body_text), 512);
-                return AttemptResult {
-                    ok: false,
-                    partial: false,
-                    status_code: Some(status_code),
-                    latency_ms,
-                    ttft_ms: None,
-                    protocol: req.protocol,
-                    model: req.model.clone(),
-                    url: safe_url,
-                    stream: false,
-                    purpose: req.purpose,
-                    extracted_text: None,
-                    tool_call_ok: None,
-                    error_kind: Some("structured_error".into()),
-                    error_message: Some(excerpt.clone()),
-                    response_excerpt: Some(excerpt),
-                    classification: cls,
-                    http_sent: true,
-                    reused_from_cache: false,
-                    suggestion_note: None,
-                    token_limit_field: None,
-                    error_evidence: ev,
-                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
-                    response_compatibility: None,
-                    requested_protocol: None,
-                    matched_protocol: None,
-                    configured_model_display: None,
-                    outbound_model: None,
-                    model_transform: None,
-                };
+                // Pass raw body excerpts into AttemptResult; redact_result must scrub
+                // error_evidence[].message as well (structured envelopes copy body text).
+                let excerpt = truncate(&body_text, 512);
+                return redact_result(
+                    AttemptResult {
+                        ok: false,
+                        partial: false,
+                        status_code: Some(status_code),
+                        latency_ms,
+                        ttft_ms: None,
+                        protocol: req.protocol,
+                        model: req.model.clone(),
+                        url: safe_url,
+                        stream: false,
+                        purpose: req.purpose,
+                        extracted_text: None,
+                        tool_call_ok: None,
+                        error_kind: Some("structured_error".into()),
+                        error_message: Some(excerpt.clone()),
+                        response_excerpt: Some(excerpt),
+                        classification: cls,
+                        http_sent: true,
+                        reused_from_cache: false,
+                        suggestion_note: None,
+                        token_limit_field: None,
+                        error_evidence: ev,
+                        channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                        response_compatibility: None,
+                        requested_protocol: None,
+                        matched_protocol: None,
+                        configured_model_display: None,
+                        outbound_model: None,
+                        model_transform: None,
+                    },
+                    redactor,
+                );
             }
         }
 
@@ -905,38 +916,41 @@ impl HttpExecutor {
                 }
             };
             let body = String::from_utf8_lossy(&body_bytes).to_string();
-            let excerpt = truncate(&redactor.redact(&body), MAX_ERROR_BYTES);
+            let excerpt = truncate(&body, MAX_ERROR_BYTES);
             let (classification, ev) = classify_with_evidence(status_code, &body, ct_ref);
-            return AttemptResult {
-                ok: false,
-                partial: false,
-                status_code: Some(status_code),
-                latency_ms: started.elapsed().as_millis() as u64,
-                ttft_ms: None,
-                protocol: req.protocol,
-                model: req.model.clone(),
-                url: safe_url,
-                stream: true,
-                purpose: req.purpose,
-                extracted_text: None,
-                tool_call_ok: None,
-                error_kind: Some("http".into()),
-                error_message: Some(excerpt.clone()),
-                response_excerpt: Some(excerpt),
-                classification,
-                http_sent: true,
-                reused_from_cache: false,
-                suggestion_note: None,
-                token_limit_field: None,
-                error_evidence: ev,
-                channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
-                response_compatibility: None,
-                requested_protocol: Some(req.protocol),
-                matched_protocol: None,
-                configured_model_display: None,
-                outbound_model: None,
-                model_transform: None,
-            };
+            return redact_result(
+                AttemptResult {
+                    ok: false,
+                    partial: false,
+                    status_code: Some(status_code),
+                    latency_ms: started.elapsed().as_millis() as u64,
+                    ttft_ms: None,
+                    protocol: req.protocol,
+                    model: req.model.clone(),
+                    url: safe_url,
+                    stream: true,
+                    purpose: req.purpose,
+                    extracted_text: None,
+                    tool_call_ok: None,
+                    error_kind: Some("http".into()),
+                    error_message: Some(excerpt.clone()),
+                    response_excerpt: Some(excerpt),
+                    classification,
+                    http_sent: true,
+                    reused_from_cache: false,
+                    suggestion_note: None,
+                    token_limit_field: None,
+                    error_evidence: ev,
+                    channel: crate::protocols::types::DiagnosisChannel::DirectUpstream,
+                    response_compatibility: None,
+                    requested_protocol: Some(req.protocol),
+                    matched_protocol: None,
+                    configured_model_display: None,
+                    outbound_model: None,
+                    model_transform: None,
+                },
+                redactor,
+            );
         }
 
         let mut stream = response.bytes_stream();

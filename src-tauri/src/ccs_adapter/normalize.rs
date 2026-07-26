@@ -26,7 +26,13 @@ pub fn normalize_provider(raw: RawProviderRow) -> NormalizedProvider {
     let settings: Value = serde_json::from_str(&raw.settings_config).unwrap_or(Value::Null);
     let meta: Value = serde_json::from_str(&raw.meta).unwrap_or(Value::Object(Default::default()));
 
-    let managed = detect_managed_auth(&raw.app_type, &meta, &settings, raw.category.as_deref());
+    let managed = detect_managed_auth(
+        &raw.app_type,
+        &meta,
+        &settings,
+        raw.category.as_deref(),
+        &raw.endpoint_urls,
+    );
 
     let (base_url, api_key, auth_kind_default, protocol_default, model) =
         extract_credentials(app_type, &settings, &meta);

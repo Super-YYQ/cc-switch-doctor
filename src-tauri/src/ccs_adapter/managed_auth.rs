@@ -2,11 +2,15 @@ use super::models::AuthKind;
 use serde_json::Value;
 
 /// Detect managed / official auth that must be skipped (no bypass).
+///
+/// `extra_base_urls` covers `provider_endpoints` (and any other discovered bases)
+/// so managed hosts are not missed when settings_config omits the base URL.
 pub fn detect_managed_auth(
     app_type: &str,
     meta: &Value,
     settings: &Value,
     category: Option<&str>,
+    extra_base_urls: &[String],
 ) -> Option<(AuthKind, String)> {
     let provider_type = meta
         .get("providerType")
@@ -27,7 +31,7 @@ pub fn detect_managed_auth(
         ));
     }
 
-    let base_candidates = collect_base_url_hints(settings);
+    let base_candidates = collect_base_url_hints(settings, extra_base_urls);
     for b in &base_candidates {
         let lower = b.to_ascii_lowercase();
         if lower.contains("chatgpt.com/backend-api/codex") {
@@ -80,7 +84,7 @@ pub fn detect_managed_auth(
     None
 }
 
-fn collect_base_url_hints(settings: &Value) -> Vec<String> {
+fn collect_base_url_hints(settings: &Value, extra_base_urls: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     let pointers = [
         "/env/ANTHROPIC_BASE_URL",
@@ -100,6 +104,12 @@ fn collect_base_url_hints(settings: &Value) -> Vec<String> {
     if let Some(cfg) = settings.get("config").and_then(|v| v.as_str()) {
         out.push(cfg.to_string());
     }
+    for u in extra_base_urls {
+        let t = u.trim();
+        if !t.is_empty() && !out.iter().any(|x| x == t) {
+            out.push(t.to_string());
+        }
+    }
     out
 }
 
@@ -111,20 +121,49 @@ mod tests {
     #[test]
     fn skips_codex_oauth() {
         let meta = json!({"providerType": "codex_oauth"});
-        let r = detect_managed_auth("codex", &meta, &json!({}), None).unwrap();
+        let r = detect_managed_auth("codex", &meta, &json!({}), None, &[]).unwrap();
         assert_eq!(r.0, AuthKind::CodexOAuth);
     }
 
     #[test]
     fn skips_copilot_url() {
         let settings = json!({"env":{"ANTHROPIC_BASE_URL":"https://api.githubcopilot.com"}});
-        let r = detect_managed_auth("claude", &json!({}), &settings, None).unwrap();
+        let r = detect_managed_auth("claude", &json!({}), &settings, None, &[]).unwrap();
         assert_eq!(r.0, AuthKind::GitHubCopilot);
+    }
+
+    #[test]
+    fn skips_copilot_url_from_provider_endpoints_only() {
+        // Managed host only in endpoints table — settings base empty.
+        let r = detect_managed_auth(
+            "claude",
+            &json!({}),
+            &json!({"env":{"ANTHROPIC_AUTH_TOKEN":"sk-x"}}),
+            Some("custom"),
+            &["https://api.githubcopilot.com/v1".into()],
+        )
+        .unwrap();
+        assert_eq!(r.0, AuthKind::GitHubCopilot);
+    }
+
+    #[test]
+    fn skips_chatgpt_backend_from_endpoints() {
+        let r = detect_managed_auth(
+            "codex",
+            &json!({}),
+            &json!({}),
+            None,
+            &["https://chatgpt.com/backend-api/codex".into()],
+        )
+        .unwrap();
+        assert_eq!(r.0, AuthKind::CodexOAuth);
     }
 
     #[test]
     fn allows_third_party() {
         let settings = json!({"env":{"ANTHROPIC_BASE_URL":"https://api.relay.test","ANTHROPIC_AUTH_TOKEN":"sk-x"}});
-        assert!(detect_managed_auth("claude", &json!({}), &settings, Some("custom")).is_none());
+        assert!(
+            detect_managed_auth("claude", &json!({}), &settings, Some("custom"), &[]).is_none()
+        );
     }
 }

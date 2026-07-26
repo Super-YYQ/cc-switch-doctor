@@ -350,3 +350,62 @@ pub fn redact_result(mut r: AttemptResult, redactor: &SecretRedactor) -> Attempt
     }
     r
 }
+
+#[cfg(test)]
+mod redact_tests {
+    use super::*;
+    use crate::ccs_adapter::ProtocolKind;
+
+    #[test]
+    fn redact_result_scrubs_error_evidence_messages() {
+        let key = "sk-secret-evidence-ABCDEFGH";
+        let mut redactor = SecretRedactor::new();
+        redactor.register_key(key);
+        let r = AttemptResult {
+            ok: false,
+            partial: false,
+            status_code: Some(200),
+            latency_ms: 1,
+            ttft_ms: None,
+            protocol: ProtocolKind::AnthropicMessages,
+            model: "m".into(),
+            url: "https://api.example.com/v1".into(),
+            stream: false,
+            purpose: RequestPurpose::Generate,
+            extracted_text: None,
+            tool_call_ok: None,
+            error_kind: Some("structured_error".into()),
+            error_message: Some(format!("auth failed for {key}")),
+            response_excerpt: Some(format!("body has {key}")),
+            classification: "AUTH_INVALID".into(),
+            http_sent: true,
+            reused_from_cache: false,
+            suggestion_note: None,
+            token_limit_field: None,
+            error_evidence: vec![ErrorEvidence {
+                source: "error_envelope".into(),
+                code: Some("invalid_api_key".into()),
+                message: Some(format!("invalid token {key}")),
+                matched_keyword: None,
+            }],
+            channel: DiagnosisChannel::DirectUpstream,
+            response_compatibility: None,
+            requested_protocol: None,
+            matched_protocol: None,
+            configured_model_display: None,
+            outbound_model: None,
+            model_transform: None,
+        };
+        let out = redact_result(r, &redactor);
+        assert!(
+            !out.error_message.as_deref().unwrap_or("").contains(key),
+            "error_message leaked key"
+        );
+        assert!(
+            !out.response_excerpt.as_deref().unwrap_or("").contains(key),
+            "response_excerpt leaked key"
+        );
+        let ev_msg = out.error_evidence[0].message.as_deref().unwrap_or("");
+        assert!(!ev_msg.contains(key), "error_evidence message leaked key: {ev_msg}");
+    }
+}

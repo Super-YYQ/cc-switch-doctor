@@ -1,3 +1,16 @@
+## [Unreleased]
+
+### Fixed
+
+- **P0:** `DiagnosisEvent` field names now serialize as camelCase (`runId`, `opaqueId`, …) so frontend progress, run isolation, and cancel/restart no longer break on live Tauri events
+- **P0:** Structured/HTTP error `error_evidence[].message` is redacted via `redact_result` before reaching the UI
+- **P0:** Managed-auth skip also inspects `provider_endpoints` base URLs (Copilot / ChatGPT backend no longer miss skip when only endpoints hold the host)
+
+### Security
+
+- Full keys in structured error envelopes cannot reach the DOM via evidence messages
+- Managed host detection covers endpoint table URLs in addition to settings_config
+
 ## [0.1.11] — 2026-07-26
 
 ### Fixed

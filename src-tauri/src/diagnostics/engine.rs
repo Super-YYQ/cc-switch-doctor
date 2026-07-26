@@ -44,7 +44,8 @@ pub struct StartDiagnosisRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+// Variant tags stay snake_case (`run_started`); field names must be camelCase for the TS UI.
+#[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
 #[allow(clippy::large_enum_variant)]
 pub enum DiagnosisEvent {
     RunStarted {
@@ -1604,5 +1605,84 @@ fn build_suggestion(
             "当前 Provider 配置中的模型映射可用。无需修改配置。本工具未修改任何配置。".into()
         }
         _ => format!("诊断状态：{status}。请查看尝试链与错误摘要。本工具未修改任何配置。"),
+    }
+}
+
+#[cfg(test)]
+mod event_serde_tests {
+    use super::*;
+    use crate::diagnostics::planner::DiagnosisMode;
+
+    #[test]
+    fn diagnosis_event_fields_are_camel_case_for_frontend() {
+        let cases = [
+            DiagnosisEvent::RunStarted {
+                run_id: "r1".into(),
+                provider_count: 2,
+                estimated_attempts: 3,
+                mode: DiagnosisMode::Quick,
+            },
+            DiagnosisEvent::ProviderStarted {
+                run_id: "r1".into(),
+                opaque_id: "op1".into(),
+                display_name: "Relay".into(),
+                attempt_count: 1,
+            },
+            DiagnosisEvent::AttemptStarted {
+                run_id: "r1".into(),
+                opaque_id: "op1".into(),
+                index: 0,
+                label: "当前配置".into(),
+                url: "https://example.com".into(),
+                protocol: "anthropic_messages".into(),
+                model: "m".into(),
+            },
+            DiagnosisEvent::RunCancelled {
+                run_id: "r1".into(),
+            },
+        ];
+
+        for ev in cases {
+            let v = serde_json::to_value(&ev).expect("serialize");
+            let keys: Vec<&String> = v.as_object().unwrap().keys().collect();
+            assert!(
+                v.get("runId").is_some(),
+                "expected camelCase runId, got keys {keys:?}"
+            );
+            assert!(
+                v.get("run_id").is_none(),
+                "snake_case run_id must not appear: {v}"
+            );
+            // Variant tag stays snake_case
+            let ty = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
+            assert!(
+                ty.contains('_') || ty == "run_cancelled" || !ty.is_empty(),
+                "type tag present: {ty}"
+            );
+        }
+
+        let started = serde_json::to_value(&DiagnosisEvent::RunStarted {
+            run_id: "r1".into(),
+            provider_count: 2,
+            estimated_attempts: 3,
+            mode: DiagnosisMode::Quick,
+        })
+        .unwrap();
+        assert_eq!(started["type"], "run_started");
+        assert_eq!(started["providerCount"], 2);
+        assert_eq!(started["estimatedAttempts"], 3);
+        assert!(started.get("provider_count").is_none());
+
+        let provider = serde_json::to_value(&DiagnosisEvent::ProviderStarted {
+            run_id: "r1".into(),
+            opaque_id: "op1".into(),
+            display_name: "Relay".into(),
+            attempt_count: 4,
+        })
+        .unwrap();
+        assert_eq!(provider["opaqueId"], "op1");
+        assert_eq!(provider["displayName"], "Relay");
+        assert_eq!(provider["attemptCount"], 4);
+        assert!(provider.get("opaque_id").is_none());
     }
 }
