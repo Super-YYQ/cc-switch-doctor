@@ -223,28 +223,34 @@ export function possibleCauses(status: string): string[] | null {
 }
 
 export function estimateClientSide(count: number, mode: "quick" | "smart" | "deep"): number {
-  const per = mode === "quick" ? 2 : mode === "smart" ? 12 : 16;
+  const per = mode === "quick" ? 1 : mode === "smart" ? 12 : 16;
   return count * per;
 }
 
 export function modeDescription(mode: "quick" | "smart" | "deep"): string {
   if (mode === "quick") {
-    return "快速验证：只优先测试当前配置，速度最快、Token 最低。";
+    return "低扰动验证：仅发送 1 次当前配置标准生成请求，不尝试兼容变体、Streaming 或 Tool Calling。";
   }
   if (mode === "smart") {
-    return "智能诊断：失败后自动尝试同 Host 的 URL、协议、认证和模型变体（最多约 12 次/配置）。";
+    return "智能诊断：当前配置失败后，才尝试同 Host 的 URL、协议、认证和模型兼容变体。可能发送多次请求并被识别为自动诊断。";
   }
-  return "深度兼容：在智能诊断基础上测试 Streaming、Tool Calling 与稳定性（最多约 16 次/配置）。";
+  return "深度兼容：在智能诊断基础上增加 Streaming、Tool Calling 和稳定性测试。请求最多、可能产生更多计费，也最容易被识别为能力测试。";
 }
 
 export function modeTooltip(mode: "quick" | "smart" | "deep"): string {
   if (mode === "quick") {
-    return "只优先测试当前配置的 URL、协议、认证方式和模型。速度最快、Token 消耗最低，适合日常确认。不进行大范围变体、Streaming 或 Tool Calling。";
+    return "低扰动验证：只测试当前 Base URL、协议、认证和模型的一次非流式生成请求。不执行 URL/协议/认证/模型变体、Streaming、Tool Calling 或字段二次回退。有效并发固定为 1。";
   }
   if (mode === "smart") {
-    return "先测当前配置；失败后按错误类型尝试同 Host 的安全 URL、协议、认证和模型变体。适合排查 /v1、协议格式、认证 Header、模型名。每配置最多约 12 次真实请求。";
+    return "智能诊断：先测当前配置；失败后按错误类型尝试同 Host 的安全 URL、协议、认证和模型变体。可能发送多次自动化诊断请求。每配置最多约 12 次真实请求。";
   }
-  return "在智能诊断基础上继续测试 Streaming、Tool Calling 和稳定性复测。耗时和 Token 最高。每配置最多约 16 次真实请求，仍遵守 Host 30 次会话上限。";
+  return "深度兼容会测试 Streaming、Tool Calling 和稳定性，属于明显的自动化能力诊断，可能被供应商识别或计费。每配置最多约 16 次真实请求，仍遵守 Host 30 次会话上限。";
+}
+
+/** Neutral multi-request impact notice shown near Start for Smart/Deep. */
+export function multiRequestImpactNotice(mode: "quick" | "smart" | "deep"): string | null {
+  if (mode === "quick") return null;
+  return "此模式可能发送多次自动化诊断请求；请确认供应商允许此类使用。";
 }
 
 export function assertNoFullKeyInDom(text: string): boolean {

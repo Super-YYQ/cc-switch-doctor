@@ -144,7 +144,7 @@ export default function App() {
   const [onlySelected, setOnlySelected] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [mode, setMode] = useState<DiagnosisMode>("smart");
+  const [mode, setMode] = useState<DiagnosisMode>("quick");
   const [concurrency, setConcurrency] = useState(1);
   const [verifyMode, setVerifyMode] = useState<VerifyMode>("auto");
   const [stopping, setStopping] = useState(false);
@@ -387,10 +387,11 @@ export default function App() {
         return;
       }
       setRunning(true);
+      const effectiveConcurrency = mode === "quick" ? 1 : concurrency;
       const { runId: id } = await startDiagnosis({
         opaqueIds: ids,
         mode,
-        concurrency,
+        concurrency: effectiveConcurrency,
         verifyMode,
       });
       activeRunIdRef.current = id;
@@ -509,8 +510,17 @@ export default function App() {
         stopping={stopping}
         verifyMode={verifyMode}
         routing={scan?.routing}
-        onMode={setMode}
-        onConcurrency={setConcurrency}
+        onMode={(m) => {
+          setMode(m);
+          if (m === "quick") setConcurrency(1);
+        }}
+        onConcurrency={(n) => {
+          if (mode === "quick") {
+            setConcurrency(1);
+            return;
+          }
+          setConcurrency(n);
+        }}
         onVerifyMode={setVerifyMode}
         onStart={() => void onStart()}
         onCancel={() => void onCancel()}
