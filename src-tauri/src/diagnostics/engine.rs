@@ -384,7 +384,12 @@ async fn diagnose_one(
                             }
                         }
 
-                        let rplans = plan_route_attempts(&provider, routing_view, mode, &app_row);
+                        // Quick never sends CCS route business requests (status/disposition only).
+                        let rplans = if mode == DiagnosisMode::Quick {
+                            Vec::new()
+                        } else {
+                            plan_route_attempts(&provider, routing_view, mode, &app_row)
+                        };
                         let mut sent = 0usize;
                         for (ri, rplan) in rplans.iter().enumerate() {
                             if cancel.is_cancelled() || sent >= ROUTE_SEND_BUDGET_PER_APP {
@@ -646,8 +651,9 @@ async fn diagnose_one(
         )
         .await;
 
-        // Gemini: if header auth fails with AUTH, try query key once
-        if plan.protocol == ProtocolKind::GeminiNative
+        // Gemini: if header auth fails with AUTH, try query key once (Smart/Deep only).
+        if mode != DiagnosisMode::Quick
+            && plan.protocol == ProtocolKind::GeminiNative
             && !result.ok
             && !result.reused_from_cache
             && matches!(
@@ -699,7 +705,9 @@ async fn diagnose_one(
             }
         }
 
-        if plan.protocol == ProtocolKind::OpenAiChat
+        // OpenAI Chat token-field fallback is Smart/Deep only (Quick stays single-send).
+        if mode != DiagnosisMode::Quick
+            && plan.protocol == ProtocolKind::OpenAiChat
             && !result.ok
             && !result.reused_from_cache
             && is_max_completion_tokens_unsupported(&result)
@@ -1105,6 +1113,11 @@ async fn diagnose_one(
     } else if tried_token_fallback && !any_ok {
         suggestion =
             format!("{suggestion} 字段兼容回退：max_completion_tokens → max_tokens 均已尝试。");
+    }
+    if mode == DiagnosisMode::Quick && !any_ok && provider.skip_reason.is_none() {
+        suggestion = format!(
+            "{suggestion} 快速验证只测试当前配置，未自动尝试兼容变体。切换智能诊断可继续检查 URL、协议、认证或模型组合。"
+        );
     }
 
     let evidence: Vec<String> = attempts

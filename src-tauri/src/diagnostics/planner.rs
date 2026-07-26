@@ -15,7 +15,8 @@ pub enum DiagnosisMode {
 impl DiagnosisMode {
     pub fn max_attempts(self) -> usize {
         match self {
-            Self::Quick => 2,
+            // Quick is low-impact: only the current-config generate request.
+            Self::Quick => 1,
             Self::Smart => 12,
             Self::Deep => 16,
         }
@@ -439,8 +440,23 @@ mod tests {
     #[test]
     fn quick_only_current() {
         let p = plan_attempts(&sample(), DiagnosisMode::Quick);
-        assert!(p.len() <= 2);
+        assert_eq!(p.len(), 1);
         assert!(p[0].is_current_config);
+        assert!(!p[0].stream);
+        assert!(!p[0].tool_call);
+        assert_eq!(DiagnosisMode::Quick.max_attempts(), 1);
+    }
+
+    #[test]
+    fn quick_has_no_variants_stream_or_tools() {
+        let p = plan_attempts(&sample(), DiagnosisMode::Quick);
+        assert!(p
+            .iter()
+            .all(|x| !x.stream && !x.tool_call && x.is_current_config));
+        assert!(!p.iter().any(|x| x.label.contains("URL")));
+        assert!(!p.iter().any(|x| x.label.contains("协议")));
+        assert!(!p.iter().any(|x| x.label.contains("认证")));
+        assert!(!p.iter().any(|x| x.label.contains("模型")));
     }
 
     #[test]

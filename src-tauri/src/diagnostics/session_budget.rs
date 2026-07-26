@@ -21,7 +21,8 @@ pub const MAX_HOST_REQUESTS: usize = 30;
 pub fn provider_send_budget(mode: crate::diagnostics::planner::DiagnosisMode) -> usize {
     use crate::diagnostics::planner::DiagnosisMode;
     match mode {
-        DiagnosisMode::Quick => 2,
+        // Low-impact: at most one real upstream send per provider.
+        DiagnosisMode::Quick => 1,
         DiagnosisMode::Smart => 12,
         DiagnosisMode::Deep => 16,
     }
@@ -641,5 +642,12 @@ mod tests {
             budget.try_reserve_send(&o),
             Err(BudgetStopReason::ConsecutiveRateLimits)
         );
+    }
+    #[test]
+    fn provider_send_budget_quick_is_one() {
+        use crate::diagnostics::planner::DiagnosisMode;
+        assert_eq!(provider_send_budget(DiagnosisMode::Quick), 1);
+        assert_eq!(provider_send_budget(DiagnosisMode::Smart), 12);
+        assert_eq!(provider_send_budget(DiagnosisMode::Deep), 16);
     }
 }
