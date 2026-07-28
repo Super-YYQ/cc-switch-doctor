@@ -28,7 +28,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 url = { version = "2", features = ["serde"] }
 secrecy = { version = "0.10", features = ["serde"] }
 zeroize = { version = "1", features = ["derive"] }
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
